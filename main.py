@@ -12,20 +12,7 @@ from flask_httpauth import HTTPBasicAuth
 app = Flask(__name__)
 auth = HTTPBasicAuth()
 
-# 🔐 ADMIN PANELİ GİRİŞ BİLGİLERİ (İstediğiniz gibi değiştirebilirsiniz)
-USER_DATA = {
-    "admin": "123456"  # Kullanıcı adı: admin , Şifre: 123456
-}
-
-@auth.verify_password
-def verify_password(username, password):
-    if username in USER_DATA and USER_DATA[username] == password:
-        return username
-    return None
-
-os.makedirs("static/qr_codes", exist_ok=True)
-
-# Gelişmiş Veritabanı Kurulumu (Ayarlar tablosu eklendi)
+# Gelişmiş Veritabanı Kurulumu
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -53,17 +40,35 @@ def init_db():
             id INTEGER PRIMARY KEY,
             enlem REAL NOT NULL,
             boylam REAL NOT NULL,
-            mesafe REAL NOT NULL
+            mesafe REAL NOT NULL,
+            admin_user TEXT NOT NULL,
+            admin_pass TEXT NOT NULL,
+            calisistan_saat REAL NOT NULL,
+            mesai_carpan REAL NOT NULL
         )
     """)
-    # Varsayılan fabrika ayarlarını yükle (Bursa koordinatları)
+    # Varsayılan fabrika ayarlarını yükle (Kullanıcı adı: admin , Şifre: 123456)
     cursor.execute("SELECT COUNT(*) FROM ayarlar")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO ayarlar (id, enlem, boylam, mesafe) VALUES (1, 40.18245, 29.11452, 20.0)")
+        cursor.execute("""
+            INSERT INTO ayarlar (id, enlem, boylam, mesafe, admin_user, admin_pass, calisistan_saat, mesai_carpan) 
+            VALUES (1, 40.1828, 29.0984, 20.0, 'admin', '123456', 225.0, 1.5)
+        """)
     conn.commit()
     conn.close()
 
 init_db()
+
+@auth.verify_password
+def verify_password(username, password):
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT admin_user, admin_pass FROM ayarlar WHERE id = 1")
+    db_user, db_pass = cursor.fetchone()
+    conn.close()
+    if username == db_user and password == db_pass:
+        return username
+    return None
 
 def mesafe_hesapla(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -75,16 +80,16 @@ def mesafe_hesapla(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# 🖥️ ŞİFRELİ ADMİN PANELİ GİRİŞİ
+# 🖥️ ŞİFRELİ ADMİN PANELİ
 @app.route("/")
 @auth.login_required
 def admin_paneli():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     
-    # Güncel konum ayarlarını çek
-    cursor.execute("SELECT enlem, boylam, mesafe FROM ayarlar WHERE id = 1")
-    sirket_enlem, sirket_boylam, sirket_mesafe = cursor.fetchone()
+    # Güncel gelişmiş ayarları çek
+    cursor.execute("SELECT enlem, boylam, mesafe, admin_user, admin_pass, calisistan_saat, mesai_carpan FROM ayarlar WHERE id = 1")
+    s_enlem, s_boylam, s_mesafe, s_user, s_pass, s_norm, s_carpan = cursor.fetchone()
     
     cursor.execute("SELECT id, isim, sabit_maas, ek_ucret FROM personeller")
     personeller_raw = cursor.fetchall()
@@ -96,8 +101,8 @@ def admin_paneli():
         res = cursor.fetchone()
         toplam_mesai = res[0] if res and res[0] is not None else 0
         
-        saatlik_ucret = round(sabit_maas / 225, 2)
-        mesai_kazanci = round(toplam_mesai * saatlik_ucret * 1.5, 2)
+        saatlik_ucret = round(sabit_maas / s_norm, 2)
+        mesai_kazanci = round(toplam_mesai * saatlik_ucret * s_carpan, 2)
         toplam_hakedis = round(sabit_maas + mesai_kazanci + ek_ucret, 2)
         
         cursor.execute("SELECT giris_saati, cikis_saati FROM kayitlar WHERE personel_id = ? ORDER BY id DESC LIMIT 1", (p_id,))
@@ -150,19 +155,28 @@ def admin_paneli():
     conn.close()
 
     html = f"""
-    <html><head><meta charset='utf-8'><title>🔒 Şifreli Yönetim Paneli</title>
-    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:30px;}} .container{{max-width:1250px; margin:0 auto; background:#fff; padding:25px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; margin-bottom:40px;}} th,td{{padding:12px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .btn-qr{{background:#6f42c1; color:#fff; padding:10px 15px; text-decoration:none; border-radius:4px; font-weight:bold;}} .btn-excel{{padding:10px 15px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; margin-bottom:20px; border:1px solid #ddd;}}</style>
+    <html><head><meta charset='utf-8'><title>🛡️ Kurumsal Yönetim Paneli</title>
+    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:30px;}} .container{{max-width:1300px; margin:0 auto; background:#fff; padding:25px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; margin-bottom:40px;}} th,td{{padding:12px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .btn-qr{{background:#6f42c1; color:#fff; padding:10px 15px; text-decoration:none; border-radius:4px; font-weight:bold;}} .btn-excel{{padding:10px 15px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; margin-bottom:20px; border:1px solid #ddd;}}</style>
     </head><body><div class='container'>
-        <h2>🔒 Güvenli Yönetim Otomasyon Paneli</h2>
+        <h2>🛡️ Kurumsal Güvenli Yönetim Otomasyon Paneli</h2>
         
-        <!-- 📍 DİNAMİK KONUM AYARLARI FORMU -->
-        <div class='form-box' style='background: #eef2f7; border-left: 5px solid #6f42c1;'>
-            <h4 style='margin-top:0; color:#4a148c;'>📍 Canlı Şirket Konum & GPS Sınırı Ayarları</h4>
-            <form action='/ayarlari-guncelle' method='POST' style='margin:0;'>
-                Mevcut Enlem: <input type='text' name='enlem' value='{sirket_enlem}' style='padding:6px; width:110px;' required> 
-                Boylam: <input type='text' name='boylam' value='{sirket_boylam}' style='padding:6px; width:110px;' required> 
-                İzin Verilen Çap (Metre): <input type='number' name='mesafe' value='{sirket_mesafe}' style='padding:6px; width:80px;' required> 
-                <input type='submit' value='Konumu Kaydet' style='padding:6px 15px; background:#6f42c1; color:#fff; border:none; cursor:pointer; font-weight:bold;'>
+        <!-- ⚙️ PANEL VE GPS AYARLARI FORMU -->
+        <div class='form-box' style='background: #eef2f7; border-left: 5px solid #007bff; display: flex; flex-wrap: wrap; gap: 15px;'>
+            <form action='/ayarlari-guncelle' method='POST' style='margin:0; width:100%; display:flex; flex-wrap:wrap; gap:10px; align-items:center;'>
+                <b style='color:#0056b3;'>📍 Konum Ayarı:</b>
+                Enlem: <input type='text' name='enlem' value='{s_enlem}' style='padding:5px; width:100px;' required>
+                Boylam: <input type='text' name='boylam' value='{s_boylam}' style='padding:5px; width:100px;' required>
+                Mesafe (Metre): <input type='number' name='mesafe' value='{s_mesafe}' style='padding:5px; width:60px;' required>
+                
+                <b style='color:#6f42c1; margin-left:15px;'>🔐 Admin Girişi:</b>
+                Kullanıcı: <input type='text' name='admin_user' value='{s_user}' style='padding:5px; width:90px;' required>
+                Şifre: <input type='text' name='admin_pass' value='{s_pass}' style='padding:5px; width:90px;' required>
+                
+                <b style='color:#28a745; margin-left:15px;'>📊 Hesap Normu:</b>
+                Aylık Norm Saat: <input type='number' name='calisistan_saat' value='{s_norm}' style='padding:5px; width:65px;' required>
+                Mesai Çarpanı: <input type='text' name='mesai_carpan' value='{s_carpan}' style='padding:5px; width:50px;' required>
+                
+                <input type='submit' value='Tüm Ayarları Kaydet' style='padding:6px 15px; background:#007bff; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;'>
             </form>
         </div>
 
@@ -170,7 +184,7 @@ def admin_paneli():
             <form action='/personel-ekle' method='POST' style='margin:0;'>
                 <input type='text' name='isim' placeholder='Ad Soyad' style='padding:8px; width:220px;' required> 
                 <input type='number' step='0.01' name='sabit_maas' placeholder='Aylık Maaş (TL)' style='padding:8px; width:180px;' required> 
-                <input type='submit' value='Personel Tanımla' style='padding:8px 15px; background:#007bff; color:#fff; border:none; cursor:pointer; font-weight:bold;'>
+                <input type='submit' value='Personel Tanımla' style='padding:8px 15px; background:#28a745; color:#fff; border:none; cursor:pointer; font-weight:bold;'>
             </form>
             <div>
                 <a href='/excel-rapor' class='btn-excel' style='margin-right:10px;'>📥 Excel Raporu</a>
@@ -180,8 +194,7 @@ def admin_paneli():
         
         <h3>👥 Personel Listesi ve Hakedişler</h3>
         <table>
-            <tr><th>Personel</th><th>Durum</th><th>Sabit Maaş</th><th>S. Ücret</th><th>Toplam Mesai</th><th>Mesai Kazancı</th><th>Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th></tr>
-            {rows}
+        {rows}
         </table>
         <h3>📋 Giriş / Çıkış Hareket Geçmişi</h3>
         <table>
@@ -192,17 +205,22 @@ def admin_paneli():
     """
     return render_template_string(html)
 
-# 💾 AYARLARI VERİTABANINA DİNAMİK KAYDETMEK İÇİN YENİ ROUTE
 @app.route("/ayarlari-guncelle", methods=["POST"])
 @auth.login_required
 def ayarlari_guncelle():
     enlem = float(request.form['enlem'])
     boylam = float(request.form['boylam'])
     mesafe = float(request.form['mesafe'])
+    user = request.form['admin_user']
+    pas = request.form['admin_pass']
+    norm = float(request.form['calisistan_saat'])
+    carpan = float(request.form['mesai_carpan'])
     
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
-    cursor.execute("UPDATE ayarlar SET enlem = ?, boylam = ?, mesafe = ? WHERE id = 1", (enlem, boylam, mesafe))
+    cursor.execute("""
+        UPDATE ayarlar SET enlem=?, boylam=?, mesafe=?, admin_user=?, admin_pass=?, calisistan_saat=?, mesai_carpan=? WHERE id=1
+    """, (enlem, boylam, mesafe, user, pas, norm, carpan))
     conn.commit()
     conn.close()
     return redirect("/")
@@ -214,18 +232,23 @@ def ortak_giris():
     cursor.execute("SELECT id, isim FROM personeller")
     personeller = cursor.fetchall()
     conn.close()
-
-    options = ""
-    for p in personeller:
-        options += f"<option value='{p[0]}'>{p[1]}</option>"
-
+    
+    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
+    
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>GPS Giriş Kontrolü</title>
-    <style>body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:40px;}} .card{{background:#fff; color:#000; padding:25px; margin:15px; border-radius:12px;}} select, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold;}} button{{color:#fff; border:none; cursor:pointer;}} .btn-giris{{background:#28a745;}} .btn-cikis{{background:#dc3545;}}</style>
+    <style>
+        body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:20px;}}
+        .card{{background:#fff; color:#000; padding:25px; margin:15px; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.2);}}
+        select, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold; box-sizing:border-box;}}
+        button{{color:#fff; border:none; cursor:pointer;}} .btn-giris{{background:#28a745;}} .btn-cikis{{background:#dc3545;}}
+        .guide-box{{display:none; background:#fff2e6; border:2px dashed #ff9900; padding:15px; margin-top:20px; border-radius:8px; text-align:left; color:#333; font-size:14px;}}
+    </style>
     <script>
         function islemYap(islemTipi) {{
             var p_id = document.getElementById("personel_select").value;
             if(!p_id) {{ alert("Lütfen adınızı seçin!"); return; }}
+            document.getElementById("guide").style.display = "none";
             if (navigator.geolocation) {{
                 navigator.geolocation.getCurrentPosition(function(position) {{
                     var veri = {{
@@ -245,8 +268,9 @@ def ortak_giris():
                         location.reload();
                     }});
                 }}, function(error) {{
-                    alert("GPS konum izni verilmedi! İşlem iptal edildi.");
-                }}, {{ enableHighAccuracy: true, timeout: 5000 }});
+                    document.getElementById("guide").style.display = "block";
+                    alert("⚠️ GPS Konum Hatası!\\nKonum izni kapalı veya algılanamadı. Lütfen aşağıdaki açma kılavuzunu uygulayın!");
+                }}, {{ enableHighAccuracy: true, timeout: 7000 }});
             }} else {{
                 alert("Telefonunuzun GPS özelliği desteklenmiyor!");
             }}
@@ -258,6 +282,16 @@ def ortak_giris():
         <select id='personel_select'><option value=''>--- İsminizi Seçin ---</option>{options}</select>
         <button class='btn-giris' onclick="islemYap('GİRİŞ')">📍 KONUMU DOĞRULA & GİRİŞ YAP</button>
         <button class='btn-cikis' onclick="islemYap('ÇIKIŞ')">📍 KONUMU DOĞRULA & ÇIKIŞ YAP</button>
+        
+        <div id='guide' class='guide-box'>
+            <h4 style='margin-top:0; color:#cc3300;'>💡 Konum İzni Nasıl Açılır?</h4>
+            <b>🤖 Android (Chrome) Kullanıcıları:</b><br>
+            1. Üstteki adres çubuğunun yanındaki Kilit (🔒) simgesine basın.<br>
+            2. Site Ayarları'na girip Konum seçeneğini İzin Ver yapın ve sayfayı yenileyin.<br><br>
+            <b>🍏 iPhone (Safari) Kullanıcıları:</b><br>
+            1. Ayarlar -> Gizlilik -> Konum Servisleri'ni aktif edin.<br>
+            2. Ayarlar -> Safari -> en alttaki Konum seçeneğini İzin Ver yapın ve sayfayı yenileyin.
+        </div>
     </div></body></html>
     """
     return render_template_string(html)
@@ -269,7 +303,7 @@ def konum_dogrula():
     islem = data.get("islem")
     kul_enlem = float(data.get("enlem"))
     kul_boylam = float(data.get("boylam"))
-
+    
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("SELECT enlem, boylam, mesafe FROM ayarlar WHERE id = 1")
@@ -282,7 +316,8 @@ def konum_dogrula():
         return jsonify({"mesaj": f"❌ İŞLEM REDDEDİLDİ!\nŞirket sınırları dışındasınız.\nUzaklık: {round(mesafe, 1)} metre. Giriş sınırınız {sirket_mesafe} metredir!"})
         
     cursor.execute("SELECT isim FROM personeller WHERE id = ?", (p_id,))
-    isim = cursor.fetchone()[0]
+    res = cursor.fetchone()
+    isim = res[0] if res else "Bilinmeyen"
     
     simdi = datetime.now()
     bugun = simdi.strftime("%Y-%m-%d")
@@ -323,7 +358,7 @@ def ortak_qr_indir():
     output = BytesIO()
     img.save(output, format="PNG")
     output.seek(0)
-    return send_file(output, download_name="Sirket_GPS_Ortak_QR.png", as_attachment=True)
+    return send_file(output, download_name="Sirket_Kurumsal_Ortak_QR.png", as_attachment=True)
 
 @app.route("/personel-ekle", methods=["POST"])
 @auth.login_required
@@ -378,3 +413,6 @@ def excel_rapor():
         df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5050, debug=False)
