@@ -170,7 +170,6 @@ def admin_paneli():
     return render_template_string(html)
 
 # 📲 2. ORTAK GİRİŞ EKRANI
-@app.route("/ortak-giri") # Not: URL uyumu için ortak-giris olarak kullanılacak
 @app.route("/ortak-giris")
 def ortak_giris():
     conn = sqlite3.connect("takip.db")
@@ -196,7 +195,10 @@ def ortak_giris():
             document.getElementById("guide").style.display = "none";
             
             if (navigator.geolocation) {{
-                                navigator.geolocation.getCurrentPosition(function(position) {
+                navigator.geolocation.getCurrentPosition(function(position) {{
+                    var veri = {{
+                        personel_id: p_id,
+                navigator.geolocation.getCurrentPosition(function(position) {
                     var veri = {
                         personel_id: p_id,
                         islem: islemTipi,
@@ -293,13 +295,13 @@ def konum_dogrula():
     conn.commit()
     conn.close()
     return jsonify({"mesaj": mesaj})
+
 @app.route("/personel-ekran")
 def personel_ekran():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("SELECT id, isim FROM personeller")
     personeller = cursor.fetchall()
-    
     p_id = request.args.get("p_id")
     gecmis_rows = ""
     secili_personel = ""
@@ -309,7 +311,6 @@ def personel_ekran():
         cursor.execute("SELECT isim FROM personeller WHERE id = ?", (p_id,))
         res_p = cursor.fetchone()
         secili_personel = res_p[0] if res_p else ""
-        
         cursor.execute("SELECT tarih, giris_saati, cikis_saati, fazla_mesai_saati FROM kayitlar WHERE personel_id = ? ORDER BY id DESC", (p_id,))
         kayitlar = cursor.fetchall()
         for k in kayitlar:
@@ -352,7 +353,7 @@ def cihaz_sifirla(p_id):
 @app.route("/ortak-qr-indir")
 @auth.login_required
 def ortak_qr_indir():
-    qr_url = f"https://{{request.host}}/ortak-giris"
+    qr_url = f"https://{request.host}/ortak-giris"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -410,12 +411,13 @@ def excel_rapor():
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
+    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
+    
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5050, debug=False)
-
