@@ -1,17 +1,22 @@
 import os
-import socket
 import sqlite3
 import qrcode
 import webbrowser
+import math
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
-from flask import Flask, request, render_template_string, redirect, send_file
+from flask import Flask, request, render_template_string, redirect, send_file, jsonify
 
 app = Flask(__name__)
 
-# 📌 Terminalde aldığınız yerel IP adresiniz
-BILGISAYAR_IP = "192.168.1.40" 
+# 📌 AYAR 1: ŞİRKETİNİZİN TAM KOORDİNATLARINI BURAYA YAZIN
+SIRKET_ENLEM = 40.18245  
+SIRKET_BOYLAM = 29.11452 
+
+# 📌 AYAR 2: KAÇ METRE YAKINDAN OKUTABİLSİNLER? (Metre cinsinden sınır)
+GECERLI_MESAFE_METRE = 20.0 
+
 os.makedirs("static/qr_codes", exist_ok=True)
 
 def init_db():
@@ -41,11 +46,20 @@ def init_db():
 
 init_db()
 
+def mesafe_hesapla(lat1, lon1, lat2, lon2):
+    R = 6371000 
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
 @app.route("/")
 def admin_paneli():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
-    
     cursor.execute("SELECT id, isim, sabit_maas, ek_ucret FROM personeller")
     personeller_raw = cursor.fetchall()
     
@@ -68,7 +82,6 @@ def admin_paneli():
 
         rows += f"""
         <tr>
-            <td><img src='/static/qr_codes/{p_id}.png' width='65' style='border:1px solid #ccc; border-radius:5px;'></td>
             <td><b>{isim}</b></td>
             <td><span style='background:{"#28a745" if durum=="İçeride (Çalışıyor)" else "#6c757d"}; color:#fff; padding:4px 8px; border-radius:3px; font-size:12px;'>{durum}</span></td>
             <td>{sabit_maas:,.2f} TL</td>
@@ -84,9 +97,7 @@ def admin_paneli():
                     <input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:4px 8px; cursor:pointer; border-radius:3px;'>
                 </form>
             </td>
-            <td>
-                <a href='/personel-sil/{p_id}' style='background:#dc3545; color:#fff; padding:5px 10px; border-radius:3px; text-decoration:none; font-size:12px;' onclick="return confirm('Silmek istediğinize emin misiniz?')">Sil</a>
-            </td>
+            <td><a href='/personel-sil/{p_id}' style='background:#dc3545; color:#fff; padding:5px 10px; border-radius:3px; text-decoration:none; font-size:12px;' onclick="return confirm('Silmek istediğinize emin misiniz?')">Sil</a></td>
         </tr>
         """
         
@@ -94,7 +105,7 @@ def admin_paneli():
         SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati 
         FROM kayitlar k 
         JOIN personeller p ON k.personel_id = p.id 
-        ORDER BY k.id DESC LIMIT 50
+        ORDER BY k.id DESC LIMIT 30
     """)
     gecmis_raw = cursor.fetchall()
     
@@ -110,77 +121,158 @@ def admin_paneli():
             <td style='font-weight:bold; color:{"#dc3545" if g[4] > 0 else "#333"};'>{g[4]} Saat</td>
         </tr>
         """
-        
     conn.close()
 
     html = f"""
-    <html><head><meta charset='utf-8'><title>Maaş ve QR Takip Paneli</title>
-    <style>
-        body{{font-family:Segoe UI, sans-serif; background:#f4f6f9; padding:30px; color:#333;}}
-        .container{{max-width:1250px; margin:0 auto; background:#fff; padding:25px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}}
-        table{{width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; margin-bottom:40px;}}
-        th,td{{padding:12px; border-bottom:1px solid #dee2e6; text-align:left;}}
-        th{{background:#212529; color:#fff;}}
-        .form-group{{background:#e9ecef; padding:20px; border-radius:6px; margin-bottom:25px; display: flex; justify-content: space-between; align-items: center;}}
-        input[type=text], input[type=number]{{padding:8px; margin-right:10px; border:1px solid #ced4da; border-radius:4px; width:200px;}}
-        input[type=submit]{{padding:8px 20px; background:#007bff; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;}}
-        .btn-excel{{padding:10px 20px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold; text-decoration:none;}}
-        .section-title{{border-left:5px solid #007bff; padding-left:10px; margin-top:30px; color:#212529;}}
-    </style>
-    </head><body>
-    <div class='container'>
-        <h2>🤖 Akıllı Personel Maaş & QR Mesai Takip Otomasyonu</h2>
-        <p style='color: #495057;'><b>Cihazınızın Güncel IP Adresi: {BILGISAYAR_IP} (Telefonunuz bu IP üzerinden bağlanacak)</b></p>
-        
-        <div class='form-group'>
-            <form action='/personel-ekle' method='POST' style='margin: 0;'>
-                <input type='text' name='isim' placeholder='Ad Soyad' required> 
-                <input type='number' step='0.01' name='sabit_maas' placeholder='Aylık Sabit Maaş (TL)' required> 
-                <input type='submit' value='Kaydet & QR Kod Üret'>
+    <html><head><meta charset='utf-8'><title>Yönetim Paneli</title>
+    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:30px;}} .container{{max-width:1250px; margin:0 auto; background:#fff; padding:25px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; margin-bottom:40px;}} th,td{{padding:12px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .btn-qr{{background:#6f42c1; color:#fff; padding:10px 15px; text-decoration:none; border-radius:4px; font-weight:bold;}} .btn-excel{{padding:10px 15px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold;}}</style>
+    </head><body><div class='container'>
+        <h2>🤖 GPS Korumalı Personel Maaş & QR Takip Paneli</h2>
+        <div style='background:#e9ecef; padding:20px; border-radius:6px; margin-bottom:25px; display:flex; justify-content:space-between; align-items:center;'>
+            <form action='/personel-ekle' method='POST' style='margin:0;'>
+                <input type='text' name='isim' placeholder='Ad Soyad' style='padding:8px; width:220px;' required> 
+                <input type='number' step='0.01' name='sabit_maas' placeholder='Aylık Maaş (TL)' style='padding:8px; width:180px;' required> 
+                <input type='submit' value='Personel Tanımla' style='padding:8px 15px; background:#007bff; color:#fff; border:none; cursor:pointer; font-weight:bold;'>
             </form>
-            <a href='/excel-rapor' class='btn-excel'>📥 Excel Raporu İndir</a>
+            <div>
+                <a href='/excel-rapor' class='btn-excel' style='margin-right:10px;'>📥 Excel Raporu</a>
+                <a href='/ortak-qr-indir' class='btn-qr'>📥 Duvara Asılacak Güvenli Ortak QR İndir</a>
+            </div>
         </div>
-        
-        <h3 class='section-title'>👥 Mevcut Personel Durumları ve Maaş Hakedişleri</h3>
+        <h3>👥 Personel Listesi ve Hakedişler</h3>
         <table>
-            <tr>
-                <th>QR Kod</th><th>Personel</th><th>Durum</th><th>Sabit Maaş</th><th>S. Ücret (Maaş/225)</th>
-                <th>Toplam Fazla Mesai</th><th>Mesai Kazancı (x1.5)</th><th>Ek Ücret / Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th>
-            </tr>
+            <tr><th>Personel</th><th>Durum</th><th>Sabit Maaş</th><th>S. Ücret</th><th>Toplam Mesai</th><th>Mesai Kazancı</th><th>Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th></tr>
             {rows}
         </table>
-        
-        <h3 class='section-title'>📋 Detaylı Giriş / Çıkış Hareket Geçmişi</h3>
+        <h3>📋 Giriş / Çıkış Hareket Geçmişi</h3>
         <table>
-            <tr>
-                <th>Tarih</th><th>Personel Adı</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Yazılan Fazla Mesai</th>
-            </tr>
+            <tr><th>Tarih</th><th>Personel Adı</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Yazılan Fazla Mesai</th></tr>
             {gecmis_rows}
         </table>
-    </div>
-    </body></html>
+    </div></body></html>
     """
     return render_template_string(html)
+
+@app.route("/ortak-giris")
+def ortak_giris():
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, isim FROM personeller")
+    personeller = cursor.fetchall()
+    conn.close()
+
+    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
+
+    html = f"""
+    <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>GPS Giriş Kontrolü</title>
+    <style>body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:40px;}} .card{{background:#fff; color:#000; padding:25px; margin:15px; border-radius:12px;}} select, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold;}} button{{color:#fff; border:none; cursor:pointer;}} .btn-giris{{background:#28a745;}} .btn-cikis{{background:#dc3545;}}</style>
+    <script>
+        function islemYap(islemTipi) {{
+            var p_id = document.getElementById("personel_select").value;
+            if(!p_id) {{ alert("Lütfen adınızı seçin!"); return; }}
+            
+            if (navigator.geolocation) {{
+                navigator.geolocation.getCurrentPosition(function(position) {{
+                    var veri = {{
+                        personel_id: p_id,
+                        islem: islemTipi,
+                        enlem: position.coords.latitude,
+                        boylam: position.coords.longitude
+                    }};
+                    
+                    fetch('/konum-dogrula', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(veri)
+                    }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        alert(data.mesaj);
+                        location.reload();
+                    }});
+                }}, function(error) {{
+                    alert("GPS konum izni verilmedi! İşlem iptal edildi.");
+                }}, {{ enableHighAccuracy: true, timeout: 5000 }});
+            }} else {{
+                alert("Telefonunuzun GPS özelliği desteklenmiyor!");
+            }}
+        }}
+    </script>
+    </head><body><div class='card'>
+        <h2 style='margin-top:0; color:#333;'>📍 Konum Doğrulamalı Giriş</h2>
+        <p style='color:#666;'>Lütfen isminizi seçip buradaki butonlara basınız:</p>
+        <select id='personel_select'><option value=''>--- İsminizi Seçin ---</option>{options}</select>
+	📍 KONUMU DOĞRULA & GİRİŞ YAP📍 KONUMU DOĞRULA & ÇIKIŞ YAP"""
+    return render_template_string(html)
+
+@app.route("/konum-dogrula", methods=["POST"])
+def konum_dogrula():
+    data = request.get_json()
+    p_id = data.get("personel_id")
+    islem = data.get("islem")
+    kul_enlem = float(data.get("enlem"))
+    kul_boylam = float(data.get("boylam"))
+    
+    mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
+    
+    if mesafe > GECERLI_MESAFE_METRE:
+        return jsonify({"mesaj": f"❌ İŞLEM REDDEDİLDİ!\nŞirket sınırları dışındasınız.\nUzaklık: {round(mesafe, 1)} metre. Giriş sınırı {GECERLI_MESAFE_METRE} metredir!"})
+        
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT isim FROM personeller WHERE id = ?", (p_id,))
+    res = cursor.fetchone()
+    isim = res[0] if res else "Bilinmeyen"
+    
+    simdi = datetime.now()
+    bugun = simdi.strftime("%Y-%m-%d")
+    saat_str = simdi.strftime("%H:%M:%S")
+    
+    cursor.execute("SELECT id, giris_saati FROM kayitlar WHERE personel_id = ? AND cikis_saati IS NULL ORDER BY id DESC LIMIT 1", (p_id,))
+    acik_kayit = cursor.fetchone()
+    
+    if islem == "GİRİŞ":
+        if acik_kayit:
+            mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
+        else:
+            cursor.execute("INSERT INTO kayitlar (personel_id, tarih, giris_saati) VALUES (?, ?, ?)", (p_id, bugun, saat_str))
+            mesaj = f"✓ BAŞARILI!\n{isim}, GİRİŞ kaydınız saat {saat_str} olarak sisteme işlendi."
+    else:
+        if not acik_kayit:
+            mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
+        else:
+            kayit_id, giris_saati_str = acik_kayit
+            giris_zamani = datetime.strptime(f"{bugun} {giris_saati_str}", "%Y-%m-%d %H:%M:%S")
+            calisilan_saat = round((simdi - giris_zamani).total_seconds() / 3600, 2)
+            fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
+            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, kayit_id))
+            mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\nToplam: {calisilan_saat} saat. (Mesai: {fazla_mesai} Saat)"
+            
+    conn.commit()
+    conn.close()
+    return jsonify({"mesaj": mesaj})
+
+@app.route("/ortak-qr-indir")
+def ortak_qr_indir():
+    qr_url = f"https://{request.host}/ortak-giris"
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(qr_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    output = BytesIO()
+    img.save(output, format="PNG")
+    output.seek(0)
+    return send_file(output, download_name="Sirket_GPS_Ortak_QR.png", as_attachment=True)
 
 @app.route("/personel-ekle", methods=["POST"])
 def personel_ekle():
     isim = request.form['isim']
     sabit_maas = float(request.form['sabit_maas'])
-    
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("INSERT INTO personeller (isim, sabit_maas) VALUES (?, ?)", (isim, sabit_maas))
-    p_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    
-    qr_url = f"http://{BILGISAYAR_IP}:5050/okut/{p_id}"
-    qr = qrcode.QRCode(version=1, box_size=5, border=2)
-    qr.add_data(qr_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    img.save(f"static/qr_codes/{p_id}.png")
-    
     return redirect("/")
 
 @app.route("/personel-sil/<int:p_id>")
@@ -191,10 +283,6 @@ def personel_sil(p_id):
     cursor.execute("DELETE FROM kayitlar WHERE personel_id = ?", (p_id,))
     conn.commit()
     conn.close()
-    try:
-        os.remove(f"static/qr_codes/{p_id}.png")
-    except:
-        pass
     return redirect("/")
 
 @app.route("/ek-ucret", methods=["POST"])
@@ -220,61 +308,12 @@ def excel_rapor():
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
-    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
-    
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
-@app.route("/okut/<int:personel_id>")
-def qr_okut(personel_id):
-    conn = sqlite3.connect("takip.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT isim FROM personeller WHERE id = ?", (personel_id,))
-    personel = cursor.fetchone()
-    
-    if not personel:
-        conn.close()
-        return "Personel bulunamadı!", 404
-
-    isim = personel[0]
-    simdi = datetime.now()
-    bugun = simdi.strftime("%Y-%m-%d")
-    saat_str = simdi.strftime("%H:%M:%S")
-
-    cursor.execute(
-        "SELECT id, giris_saati FROM kayitlar WHERE personel_id = ? AND cikis_saati IS NULL ORDER BY id DESC LIMIT 1",
-        (personel_id,)
-    )
-    acik_kayit = cursor.fetchone()
-
-    if not acik_kayit:
-        cursor.execute("INSERT INTO kayitlar (personel_id, tarih, giris_saati) VALUES (?, ?, ?)", (personel_id, bugun, saat_str))
-        mesaj = f"Merhaba {isim}, GİRİŞ kaydınız saat {saat_str} olarak alındı. İyi çalışmalar!"
-    else:
-        kayit_id, giris_saati_str = acik_kayit
-        giris_zamani = datetime.strptime(f"{bugun} {giris_saati_str}", "%Y-%m-%d %H:%M:%S")
-        calisilan_saat = round((simdi - giris_zamani).total_seconds() / 3600, 2)
-        fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
-        
-        cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, kayit_id))
-        mesaj = f"Güle güle {isim}, ÇIKIŞ kaydınız alındı. Toplam: {calisilan_saat} saat çalıştınız. (Fazla Mesai: {fazla_mesai} Saat)"
-    
-    conn.commit()
-    conn.close()
-
-    html = f"""
-    <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>
-    body {{ font-family: sans-serif; background: #212529; color: #fff; text-align: center; padding-top: 60px; }}
-    .card {{ background: #fff; color: #000; padding: 25px; margin: 20px auto; max-width: 450px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }}
-    h1 {{ color: #28a745; }}
-    </style></head><body><div class='card'><h1>✓ İşlem Başarılı</h1><h3>{isim}</h3><p style='font-size:16px;'>{mesaj}</p></div></body></html>
-    """
-    return render_template_string(html)
-
 if __name__ == "__main__":
-    webbrowser.open("http://127.0.0.1:5050")
     app.run(host="0.0.0.0", port=5050, debug=False)
-
+	
