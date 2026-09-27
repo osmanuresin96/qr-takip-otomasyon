@@ -12,7 +12,7 @@ app = Flask(__name__)
 # 📌 MİLLET MAHALLESİ NO:64/1 KESİN BİNA KOORDİNATLARI VE TOLERANS ÇAPI
 SIRKET_ENLEM = 40.20145
 SIRKET_BOYLAM = 29.11718
-GECERLI_MESAFE_METRE = 60.0  # Bina içi sapmaları önleyen ideal kurumsal daire çapı
+GECERLI_MESAFE_METRE = 60.0  # Bina içi sapmaları tolere eden ideal güvenli çap
 
 os.makedirs("static", exist_ok=True)
 def init_db():
@@ -136,14 +136,14 @@ def admin_paneli():
         p_id, isim, sabit_maas, ek_ucret, pin = p
         cursor.execute("SELECT SUM(fazla_mesai_saati) FROM kayitlar WHERE personel_id = ?", (p_id,))
         res = cursor.fetchone()
-        toplam_mesai = res if res and res is not None else 0
+        toplam_mesai = res[0] if res and res[0] is not None else 0
         saatlik_ucret = round(sabit_maas / 225, 2)
         mesai_kazanci = round(toplam_mesai * saatlik_ucret * 1.5, 2)
         toplam_hakedis = round(sabit_maas + mesai_kazanci + ek_ucret, 2)
         rows += f"<tr><td><b>{isim}</b></td><td style='font-weight:bold; color:#6f42c1;'>{pin}</td><td>{sabit_maas:,.2f} TL</td><td>{saatlik_ucret:,.2f} TL</td><td>{toplam_mesai} Saat</td><td style='color:red;'>+{mesai_kazanci:,.2f} TL</td><td>{ek_ucret:,.2f} TL</td><td style='color:#28a745; font-weight:bold;'>{toplam_hakedis:,.2f} TL</td><td><form action='/ek-ucret' method='POST' style='margin:0;'><input type='hidden' name='p_id' value='{p_id}'><input type='number' name='miktar' style='width:65px; padding:4px;' placeholder='TL' required><input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:5px;'></form></td><td><a href='/p-sil/{p_id}' style='background:#dc3545; color:#fff; padding:4px 8px; border-radius:3px; text-decoration:none; font-size:12px;'>Sil</a></td></tr>"
     cursor.execute("SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati FROM kayitlar k JOIN personeller p ON k.personel_id = p.id ORDER BY k.id DESC LIMIT 30")
     gecmis_raw = cursor.fetchall()
-    gecmis_rows = "".join([f"<tr><td>{g}</td><td><b>{g}</b></td><td style='color:green;'>{g}</td><td>{g if g else 'İçeride'}</td><td>{g} Saat</td></tr>" for g in gecmis_raw])
+    gecmis_rows = "".join([f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{g[3] if g[3] else 'İçeride'}</td><td>{g[4]} Saat</td></tr>" for g in gecmis_raw])
     conn.close()
     html = f"""
     <html><head><meta charset='utf-8'><title>Yönetim Paneli</title>
@@ -174,7 +174,7 @@ def ortak_giris():
     cursor.execute("SELECT id, isim FROM personeller ORDER BY isim ASC")
     personeller = cursor.fetchall()
     conn.close()
-    options = "".join([f"<option value='{p}'>{p}</option>" for p in personeller])
+    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
     
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Paneli</title>
@@ -186,7 +186,7 @@ def ortak_giris():
             var st = document.getElementById("status_text");
             if(!p_id || !pin) {{ alert("Lütfen adınızı seçin ve şifrenizi girin!"); return; }}
             if (navigator.geolocation) {{
-                st.innerText = "⏳ Gerçek uydu sinyalleri taranıyor... Lütfen cam kenarında bekleyin.";
+                st.innerText = "⏳ Gerçek uydu sinyalleri taranıyor... Lütfen bekleyin.";
                 navigator.geolocation.getCurrentPosition(function(pos) {{
                     var veri = {{ personel_id: p_id, pin_kodu: pin, islem: islemTipi, enlem: pos.coords.latitude, boylam: pos.coords.longitude }};
                     st.innerText = "⏳ Konum doğrulanıyor...";
@@ -215,9 +215,11 @@ def konum_dogrula():
     islem = data.get("islem")
     kul_enlem = float(data.get("enlem"))
     kul_boylam = float(data.get("boylam"))
+    
     mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
     if mesafe > GECERLI_MESAFE_METRE:
-        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir.\n\n💡 İpucu: Telefonun konum ayarlarından 'Tam/Hassas Konum' özelliğini açıp dükkan içinde yer değiştirerek tekrar dene."})
+        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir.\n\n💡 İpucu: Telefonun konum ayarlarından 'Hassas/Tam Konum' özelliğini açıp dükkan içinde pencere kenarına geçerek tekrar dene."})
+
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("SELECT isim, pin_kodu FROM personeller WHERE id = ?", (p_id,))
@@ -225,12 +227,14 @@ def konum_dogrula():
     if not res_p or str(res_p[1]) != str(pin):
         conn.close()
         return jsonify({"durum": "hata", "mesaj": "❌ HATA: PIN şifreniz yanlış!"})
+        
     isim = res_p[0]
     simdi = datetime.now()
     bugun = simdi.strftime("%Y-%m-%d")
     saat_str = simdi.strftime("%H:%M:%S")
     cursor.execute("SELECT id, giris_saati FROM kayitlar WHERE personel_id = ? AND cikis_saati IS NULL ORDER BY id DESC LIMIT 1", (p_id,))
     acik_kayit = cursor.fetchone()
+    
     if islem == "GİRİŞ":
         if acik_kayit: mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
         else:
@@ -239,7 +243,11 @@ def konum_dogrula():
     else:
         if not acik_kayit: mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
         else:
-            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, 0.0, acik_kayit[0]))
+            k_id, g_saat = acik_kayit
+            g_zamani = datetime.strptime(f"{bugun} {g_saat}", "%Y-%m-%d %H:%M:%S")
+            calisilan_saat = round((simdi - g_zamani).total_seconds() / 3600, 2)
+            fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
+            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, k_id))
             mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı. Fark: {round(mesafe, 1)} Metre."
     conn.commit()
     conn.close()
@@ -265,7 +273,7 @@ def personel_ekran():
             gecmis_rows += f"<tr><td>{k[0]}</td><td>{k[1]}</td><td>{k[2] if k[2] else 'İçeride'}</td><td>{k[3]} Saat</td></tr>"
             toplam_mesai_saati += k[3]
     conn.close()
-    options = "".join([f"<option value='{p[0]}' {'selected' if p_id==str(p[0]) else ''}>{p[1]}</option>" for p in personeller])
+    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Çalışma Geçmişi</title>
     <style>body{{font-family:sans-serif; background:#f4f6f9; color:#333; padding:20px;}} .container{{max-width:800px; margin:0 auto; background:#fff; padding:20px; border-radius:10px;}} table{{width:100%; border-collapse:collapse; margin-top:15px;}} th,td{{padding:10px; border-bottom:1px solid #ddd; text-align:left;}} th{{background:#343a40; color:#fff;}} select, input{{padding:10px; border-radius:5px;}}</style>
