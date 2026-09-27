@@ -6,17 +6,14 @@ from flask import Flask, request, render_template_string, redirect, send_file, j
 
 app = Flask(__name__)
 
-# 📌 MİLLET MAHALLESİ NO:64/1 KESİN BİNA KOORDİNATLARI VE TOLERANS ÇAPI
 SIRKET_ENLEM, SIRKET_BOYLAM = 40.20145, 29.11718
-GECERLI_MESAFE_METRE = 60.0  # Kapalı alan uydu sapmalarını çözen kurumsal çap
+GECERLI_MESAFE_METRE = 60.0
 
 os.makedirs("static", exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS personeller")
-    cursor.execute("DROP TABLE IF EXISTS yonetici")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS personeller (
             id INTEGER PRIMARY KEY AUTOINCREMENT, isim TEXT NOT NULL, sabit_maas REAL NOT NULL, ek_ucret REAL DEFAULT 0, pin_kodu TEXT NOT NULL
@@ -87,7 +84,7 @@ def gizli_kasa_ayarlari():
             cursor.execute("UPDATE yonetici SET kullanici_adi = ?, sifre = ? WHERE id = 1", (yu, yp))
             conn.commit()
             conn.close()
-            mesaj = "✅ Giriş şifresi ve kullanıcı adı başarıyla güncellendi!"
+            mesaj = "✅ Bilgiler güncellendi!"
     return render_template_string(f"""
     <html><body style='font-family:sans-serif; background:#11141a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#fff;'><div style='background:#fff; color:#333; padding:30px; border-radius:12px; width:100%; max-width:380px;'>
         <h3 style='margin:0 0 10px 0; text-align:center;'>🔐 Gizli Şifre Değiştirme</h3>
@@ -95,7 +92,7 @@ def gizli_kasa_ayarlari():
         <form method='POST'>
             Yeni Admin Adı: <input type='text' name='yeni_user' style='width:100%; padding:10px; margin-top:10px;' required><br>
             Yeni Admin Şifresi: <input type='text' name='yeni_pass' style='width:100%; padding:10px; margin-top:10px;' required><br>
-            <input type='submit' value='Bilgileri Güncelle' style='width:100%; padding:12px; background:#6f42c1; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:15px;'>
+            <input type='submit' value='Güncelle' style='width:100%; padding:12px; background:#6f42c1; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:15px;'>
         </form>
         <br><a href='/' style='display:block; text-align:center; color:#007bff; text-decoration:none;'>← Paneline Dön</a>
     </div></body></html>""")
@@ -112,11 +109,12 @@ def admin_paneli():
         p_id, isim, sabit_maas, ek_ucret, pin = p
         cursor.execute("SELECT SUM(fazla_mesai_saati) FROM kayitlar WHERE personel_id = ?", (p_id,))
         res = cursor.fetchone()
-        toplam_mesai = res if res and res is not None else 0
+        toplam_mesai = res[0] if res and res[0] is not None else 0
         su = round(sabit_maas / 225, 2)
         mk = round(toplam_mesai * su * 1.5, 2)
         th = round(sabit_maas + mk + ek_ucret, 2)
         rows += f"<tr><td><b>{isim}</b></td><td style='font-weight:bold; color:#6f42c1;'>{pin}</td><td>{sabit_maas:,.2f} TL</td><td>{su:,.2f} TL</td><td>{toplam_mesai} Saat</td><td style='color:red;'>+{mk:,.2f} TL</td><td>{ek_ucret:,.2f} TL</td><td style='color:#28a745; font-weight:bold;'>{th:,.2f} TL</td><td><form action='/ek-ucret' method='POST' style='margin:0;'><input type='hidden' name='p_id' value='{p_id}'><input type='number' name='miktar' style='width:65px; padding:4px;' placeholder='TL' required><input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:5px;'></form></td><td><a href='/p-sil/{p_id}' style='background:#dc3545; color:#fff; padding:4px 8px; border-radius:3px; text-decoration:none; font-size:12px;'>Sil</a></td></tr>"
+    
     cursor.execute("SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati FROM kayitlar k JOIN personeller p ON k.personel_id = p.id ORDER BY k.id DESC LIMIT 30")
     gecmis_raw = cursor.fetchall()
     gecmis_rows = "".join([f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{g[3] if g[3] else 'İçeride'}</td><td>{g[4]} Saat</td></tr>" for g in gecmis_raw])
@@ -132,17 +130,16 @@ def admin_paneli():
                 <input type='text' name='isim' placeholder='Personel Adı' required> 
                 <input type='number' step='0.01' name='sabit_maas' placeholder='Maaş' required> 
                 <input type='text' name='pin' placeholder='Giriş PIN' maxlength='4' required> 
-                <input type='submit' value='Personel Tanımla' style='padding:6px 15px; background:#007bff; color:#fff; border:none; cursor:pointer;'>
+                <input type='submit' value='Personel Tanımla' style='padding:6px 15px; background:#007bff; color:#fff; border:none; cursor:pointer; border-radius:4px;'>
             </form>
             <div>
                 <a href='/excel-rapor' style='padding:8px 12px; background:#28a745; color:#fff; text-decoration:none; font-weight:bold; border-radius:4px; margin-right:10px;'>📥 Excel Raporu</a>
                 <a href='/ortak-qr-indir' style='padding:8px 12px; background:#6f42c1; color:#fff; text-decoration:none; font-weight:bold; border-radius:4px;'>📥 Ortak QR</a>
             </div>
         </div>
-        <table><tr><th>Personel</th><th>Giriş PIN</th><th>Sabit Maaş</th><th>Saatlik Ücret</th><th>Toplam Mesai</th><th>Mesai Kazancı</th><th>Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th></tr>{{rows}}</table>
-        <h3>📋 Genel Giriş / Çıkış Hareket Kayıtları</h3><table><tr><th>Tarih</th><th>Personel Adı</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>{{gecmis_rows}}</table>
-    </div></body></html>
-    """.replace("{{rows}}", rows).replace("{{gecmis_rows}}", gecmis_rows)
+        <table><tr><th>Personel</th><th>Giriş PIN</th><th>Sabit Maaş</th><th>Saatlik Ücret</th><th>Toplam Mesai</th><th>Mesai Kazancı</th><th>Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th></tr>{rows}</table>
+        <h3>📋 Genel Giriş / Çıkış Hareket Kayıtları</h3><table><tr><th>Tarih</th><th>Personel Adı</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>{gecmis_rows}</table>
+    </div></body></html>"""
     return render_template_string(html)
 
 @app.route("/ortak-grid")
@@ -155,6 +152,8 @@ def ortak_giris():
     conn.close()
     options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
     
+    html = f"""
+    <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Paneli</title>
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Paneli</title>
     <style>body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:30px;}} .card{{background:#fff; color:#000; padding:25px; margin:15px auto; max-width:400px; border-radius:12px;}} select, input, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold; box-sizing:border-box;}} button{{color:#fff; border:none; cursor:pointer;}} .btn-g{{background:#28a745;}} .btn-c{{background:#dc3545;}} .status{{font-size:14px; margin-top:12px; color:orange; font-weight:bold;}}</style>
@@ -177,15 +176,13 @@ def ortak_giris():
     </script>
     </head><body><div class='card'>
         <h2>🏢 Giriş Onay Sistemi</h2>
-        <p style='color:#666;'>Adınızı seçin, 4 haneli PIN şifrenizi girip işlem yapın:</p>
         <select id='personel_select'><option value=''>--- Adınızı Seçin ---</option>{options}</select>
         <input type='password' id='pin_input' placeholder='4 Haneli Giriş PIN' maxlength='4' inputmode='numeric'>
         <button class='btn-g' onclick="islemYap('GİRİŞ')">📍 KONUMU DOĞRULA & GİRİŞ YAP</button>
         <button class='btn-c' onclick="islemYap('ÇIKIŞ')">📍 KONUMU DOĞRULA & ÇIKIŞ YAP</button>
         <a href='/personel-ekran' style='display:inline-block; margin-top:20px; color:#007bff; text-decoration:none; font-weight:bold;'>👁️ Kendi Giriş Saatlerimi Sorgula</a>
         <div id='status_text' class='status'></div>
-    </div></body></html>
-    """
+    </div></body></html>"""
     return render_template_string(html)
 
 @app.route("/konum-dogrula", methods=["POST"])
@@ -198,7 +195,7 @@ def konum_dogrula():
     
     mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
     if mesafe > GECERLI_MESAFE_METRE:
-        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\\n\\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir."})
+        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir."})
 
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -216,22 +213,19 @@ def konum_dogrula():
     acik_kayit = cursor.fetchone()
     
     if islem == "GİRİŞ":
-        if acik_kayit:
-            mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
+        if acik_kayit: mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
         else:
             cursor.execute("INSERT INTO kayitlar (personel_id, tarih, giris_saati) VALUES (?, ?, ?)", (p_id, bugun, saat_str))
-            mesaj = f"✓ BAŞARILI!\\n{isim}, GİRİŞ kaydınız alındı.\\nMesafe Farkı: {round(mesafe, 1)} Metre."
+            mesaj = f"✓ BAŞARILI!\n{isim}, GİRİŞ kaydınız alındı.\nMesafe Farkı: {round(mesafe, 1)} Metre."
     else:
-        if not acik_kayit:
-            mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
+        if not acik_kayit: mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
         else:
             k_id, g_saat = acik_kayit[0], acik_kayit[1]
             g_zamani = datetime.strptime(f"{bugun} {g_saat}", "%Y-%m-%d %H:%M:%S")
             calisilan_saat = round((simdi - g_zamani).total_seconds() / 3600, 2)
             fm = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
             cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fm, k_id))
-            mesaj = f"✓ BAŞARILI!\\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\\nMesafe Farkı: {round(mesafe, 1)} Metre."
-            
+            mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\nMesafe Farkı: {round(mesafe, 1)} Metre."
     conn.commit()
     conn.close()
     return jsonify({"durum": "ok", "mesaj": mesaj})
@@ -244,7 +238,6 @@ def personel_ekran():
     personeller = cursor.fetchall()
     p_id = request.args.get("p_id")
     gecmis_rows, secili_personel, tm = "", "", 0
-    
     if p_id:
         cursor.execute("SELECT isim FROM personeller WHERE id = ?", (p_id,))
         res_p = cursor.fetchone()
@@ -252,38 +245,27 @@ def personel_ekran():
         cursor.execute("SELECT tarih, giris_saati, cikis_saati, fazla_mesai_saati FROM kayitlar WHERE personel_id = ? ORDER BY id DESC", (p_id,))
         kayitlar = cursor.fetchall()
         for k in kayitlar:
-            cikis_val = k[2] if k[2] else 'İçeride'
-            gecmis_rows += f"<tr><td>{k[0]}</td><td>{k[1]}</td><td>{cikis_val}</td><td>{k[3]} Saat</td></tr>"
+            gecmis_rows += f"<tr><td>{k[0]}</td><td>{k[1]}</td><td>{k[2] if k[2] else 'İçeride'}</td><td>{k[3]} Saat</td></tr>"
             tm += k[3]
-            
     conn.close()
-    options = "".join([f"<option value='{p[0]}' {'selected' if p_id==str(p[0]) else ''}>{p[1]}</option>" for p in personeller])
-    
+    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Çalışma Geçmişi</title>
-    <style>body{{font-family:sans-serif; background:#f4f6f9; color:#333; padding:20px;}} .container{{max-width:800px; margin:0 auto; background:#fff; padding:20px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1);}} table{{width:100%; border-collapse:collapse; margin-top:15px;}} th,td{{padding:10px; border-bottom:1px solid #ddd; text-align:left;}} th{{background:#343a40; color:#fff;}} select, input{{padding:10px; border-radius:5px;}}</style>
+    <style>body{{font-family:sans-serif; background:#f4f6f9; color:#333; padding:20px;}} .container{{max-width:800px; margin:0 auto; background:#fff; padding:20px; border-radius:10px;}} table{{width:100%; border-collapse:collapse; margin-top:15px;}} th,td{{padding:10px; border-bottom:1px solid #ddd; text-align:left;}} th{{background:#343a40; color:#fff;}} select, input{{padding:10px; border-radius:5px;}}</style>
     </head><body><div class='container'>
         <h2>📊 Kendi Giriş / Çıkış Geçmişini Sorgula</h2>
-        <form method='GET' action='/personel-ekran'>
-            <select name='p_id'><option value=''>--- Adınızı Seçin ---</option>{options}</select>
-            <input type='submit' value='Sorgula'>
-        </form>
+        <form method='GET' action='/personel-ekran'><select name='p_id'><option value=''>--- Adınızı Seçin ---</option>{options}</select> <input type='submit' value='Sorgula'></form>
         {{personel_bilgi}}
-        <table>
-            <tr><th>Tarih</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>
-            {gecmis_rows}
-        </table>
+        <table><tr><th>Tarih</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>{gecmis_rows}</table>
         <br><a href='/ortak-giris' style='color:#007bff; text-decoration:none; font-weight:bold;'>← Giriş/Çıkış Ekranına Dön</a>
-    </div></body></html>
-    """
+    </div></body></html>"""
     p_info = f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{tm} Saat</span></h4>" if secili_personel else ""
     return render_template_string(html.replace("{{personel_bilgi}}", p_info))
-
 @app.route("/ortak-qr-indir")
 def ortak_qr_indir():
     if not admin_oturum_kontrol(): return redirect("/login")
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
-    qr.add_data(f"https://{{request.host}}/ortak-giris")
+    qr.add_data(f"https://{request.host}/ortak-giris")
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     output = BytesIO()
@@ -329,8 +311,7 @@ def excel_rapor():
     df = pd.read_sql_query("SELECT k.tarih AS [Tarih], p.isim AS [Personel Adı], p.sabit_maas AS [Sabit Maaş (TL)], k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], k.fazla_mesai_saati AS [Fazla Mesai (Saat)] FROM kayitlar k JOIN personeller p ON k.personel_id = p.id", conn)
     conn.close()
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer: 
-        df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
