@@ -1,7 +1,6 @@
 import os
 import sqlite3
 import qrcode
-import webbrowser
 import math
 import pandas as pd
 from io import BytesIO
@@ -10,13 +9,12 @@ from flask import Flask, request, render_template_string, redirect, send_file, j
 
 app = Flask(__name__)
 
-# 📌 MİLLET MAHALLESİ NO:64/1 DÜKKANINIZIN KESİN UYDU KOORDİNATLARI
+# 📌 MİLLET MAHALLESİ NO:64/1 KESİN BİNA KOORDİNATLARI VE TOLERANS ÇAPI
 SIRKET_ENLEM = 40.20145
 SIRKET_BOYLAM = 29.11718
-GECERLI_MESAFE_METRE = 50.0  # Kapalı alan uydu sapmaları için güvenli daire çapı
+GECERLI_MESAFE_METRE = 60.0  # Bina içi sapmaları önleyen ideal kurumsal daire çapı
 
 os.makedirs("static", exist_ok=True)
-
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -54,6 +52,7 @@ def init_db():
     conn.close()
 
 init_db()
+
 def mesafe_hesapla(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1 = math.radians(lat1)
@@ -71,7 +70,6 @@ def admin_oturum_kontrol():
     db_user, db_pass = cursor.fetchone()
     conn.close()
     return request.cookies.get("admin_session") == f"{db_user}_{db_pass}"
-
 @app.route("/login", methods=["GET", "POST"])
 def login_sayfasi():
     hata = ""
@@ -80,7 +78,6 @@ def login_sayfasi():
     cursor.execute("SELECT kullanici_adi, sifre FROM yonetici WHERE id = 1")
     db_user, db_pass = cursor.fetchone()
     conn.close()
-
     if request.method == "POST":
         u = request.form.get("username")
         p = request.form.get("password")
@@ -90,15 +87,13 @@ def login_sayfasi():
             return response
         hata = "❌ Kullanıcı adı veya şifre hatalı!"
     return render_template_string(f"""
-    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş</title>
-    <style>body{{font-family:sans-serif; background:#1e222b; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;}} .card{{background:#fff; padding:30px; border-radius:10px; width:100%; max-width:340px; box-shadow:0 4px 15px rgba(0,0,0,0.3);}} input{{width:100%; padding:12px; margin-top:10px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box;}} input[type=submit]{{background:#007bff; color:#fff; font-weight:bold; cursor:pointer; border:none; margin-top:15px;}}</style>
-    </head><body><div class='card'>
-        <h3 style='margin:0 0 10px 0; text-align:center; color:#333;'>🔐 Yönetici Girişi</h3>
+    <html><body style='font-family:sans-serif; background:#1e222b; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;'><div style='background:#fff; padding:30px; border-radius:10px; width:100%; max-width:340px;'>
+        <h3 style='margin:0 0 10px 0; text-align:center;'>🔐 Yönetici Girişi</h3>
         <p style='color:red; text-align:center; font-size:14px; margin:0;'>{hata}</p>
         <form method='POST'>
-            <input type='text' name='username' placeholder='Kullanıcı Adı' required>
-            <input type='password' name='password' placeholder='Giriş Şifresi' required>
-            <input type='submit' value='Giriş Yap'>
+            <input type='text' name='username' placeholder='Kullanıcı Adı' style='width:100%; padding:12px; margin-top:10px;' required><br>
+            <input type='password' name='password' placeholder='Şifre' style='width:100%; padding:12px; margin-top:10px;' required><br>
+            <input type='submit' value='Giriş Yap' style='width:100%; padding:12px; background:#007bff; color:#fff; font-weight:bold; border:none; margin-top:15px; cursor:pointer;'>
         </form>
     </div></body></html>
     """)
@@ -117,19 +112,16 @@ def gizli_kasa_ayarlari():
             conn.commit()
             conn.close()
             mesaj = "✅ Giriş şifresi ve kullanıcı adı başarıyla güncellendi!"
-            
     return render_template_string(f"""
-    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Gizli Ayarlar</title>
-    <style>body{{font-family:sans-serif; background:#11141a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#fff;}} .card{{background:#fff; color:#333; padding:30px; border-radius:12px; width:100%; max-width:380px;}} input{{width:100%; padding:12px; margin-top:10px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box;}}</style>
-    </head><body><div class='card'>
+    <html><body style='font-family:sans-serif; background:#11141a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#fff;'><div style='background:#fff; color:#333; padding:30px; border-radius:12px; width:100%; max-width:380px;'>
         <h3 style='margin:0 0 10px 0; text-align:center;'>🔐 Gizli Şifre Değiştirme</h3>
         <p style='color:green; font-weight:bold; font-size:14px; text-align:center;'>{mesaj}</p>
         <form method='POST'>
-            Yeni Admin Kullanıcı Adı: <input type='text' name='yeni_user' required>
-            Yeni Admin Giriş Şifresi: <input type='text' name='yeni_pass' required>
-            <input type='submit' value='Bilgileri Güncelle' style='background:#6f42c1; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:15px; padding:12px;'>
+            Yeni Admin Adı: <input type='text' name='yeni_user' style='width:100%; padding:10px; margin-top:10px;' required><br>
+            Yeni Admin Şifresi: <input type='text' name='yeni_pass' style='width:100%; padding:10px; margin-top:10px;' required><br>
+            <input type='submit' value='Bilgileri Güncelle' style='width:100%; padding:12px; background:#6f42c1; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:15px;'>
         </form>
-        <br><a href='/' style='display:block; text-align:center; color:#007bff; text-decoration:none; font-weight:bold;'>← Yönetim Paneline Dön</a>
+        <br><a href='/' style='display:block; text-align:center; color:#007bff; text-decoration:none;'>← Paneline Dön</a>
     </div></body></html>
     """)
 @app.route("/")
@@ -139,7 +131,6 @@ def admin_paneli():
     cursor = conn.cursor()
     cursor.execute("SELECT id, isim, sabit_maas, ek_ucret, pin_kodu FROM personeller")
     personeller_raw = cursor.fetchall()
-    
     rows = ""
     for p in personeller_raw:
         p_id, isim, sabit_maas, ek_ucret, pin = p
@@ -149,25 +140,22 @@ def admin_paneli():
         saatlik_ucret = round(sabit_maas / 225, 2)
         mesai_kazanci = round(toplam_mesai * saatlik_ucret * 1.5, 2)
         toplam_hakedis = round(sabit_maas + mesai_kazanci + ek_ucret, 2)
-        
-        rows += f"<tr><td><b>{isim}</b></td><td style='font-weight:bold; color:#6f42c1;'>{pin}</td><td>{sabit_maas:,.2f} TL</td><td>{saatlik_ucret:,.2f} TL</td><td>{toplam_mesai} Saat</td><td style='color:red;'>+{mesai_kazanci:,.2f} TL</td><td>{ek_ucret:,.2f} TL</td><td style='color:#28a745; font-weight:bold;'>{toplam_hakedis:,.2f} TL</td><td><form action='/ek-ucret' method='POST' style='margin:0;'><input type='hidden' name='p_id' value='{p_id}'><input type='number' name='miktar' style='width:65px; padding:4px;' placeholder='TL' required><input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:5px;'></form></td><td><a href='/p-sil/{{p_id}}' style='background:#dc3545; color:#fff; padding:4px 8px; border-radius:3px; text-decoration:none; font-size:12px;'>Sil</a></td></tr>"
-        
+        rows += f"<tr><td><b>{isim}</b></td><td style='font-weight:bold; color:#6f42c1;'>{pin}</td><td>{sabit_maas:,.2f} TL</td><td>{saatlik_ucret:,.2f} TL</td><td>{toplam_mesai} Saat</td><td style='color:red;'>+{mesai_kazanci:,.2f} TL</td><td>{ek_ucret:,.2f} TL</td><td style='color:#28a745; font-weight:bold;'>{toplam_hakedis:,.2f} TL</td><td><form action='/ek-ucret' method='POST' style='margin:0;'><input type='hidden' name='p_id' value='{p_id}'><input type='number' name='miktar' style='width:65px; padding:4px;' placeholder='TL' required><input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:5px;'></form></td><td><a href='/p-sil/{p_id}' style='background:#dc3545; color:#fff; padding:4px 8px; border-radius:3px; text-decoration:none; font-size:12px;'>Sil</a></td></tr>"
     cursor.execute("SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati FROM kayitlar k JOIN personeller p ON k.personel_id = p.id ORDER BY k.id DESC LIMIT 30")
     gecmis_raw = cursor.fetchall()
-    gecmis_rows = "".join([f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{g[3] if g[3] else 'İçeride'}</td><td>{g[4]} Saat</td></tr>" for g in gecmis_raw])
+    gecmis_rows = "".join([f"<tr><td>{g}</td><td><b>{g}</b></td><td style='color:green;'>{g}</td><td>{g if g else 'İçeride'}</td><td>{g} Saat</td></tr>" for g in gecmis_raw])
     conn.close()
-    
     html = f"""
     <html><head><meta charset='utf-8'><title>Yönetim Paneli</title>
-    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:25px; color:#333;}} .container{{max-width:1350px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
+    <style>body{{font-family:sans-serif; background:#f4f6f9; padding:25px; color:#333;}} .container{{max-width:1300px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
     </head><body><div class='container'>
         <h2>🛡️ Şirket Maaş, Prim ve Güvenli QR Kontrol Otomasyonu</h2>
         <div class='form-box'>
             <form action='/p-ekle' method='POST' style='margin:0;'>
-                <input type='text' name='isim' placeholder='Personel Adı Soyadı' style='width:220px;' required> 
-                <input type='number' step='0.01' name='sabit_maas' placeholder='Aylık Net Maaş' style='width:150px;' required> 
-                <input type='text' name='pin' placeholder='4 Haneli Giriş PIN' style='width:120px;' maxlength='4' required> 
-                <input type='submit' value='Personel Tanımla' style='padding:6px 15px; background:#007bff; color:#fff; border:none; cursor:pointer; font-weight:bold; border-radius:4px;'>
+                <input type='text' name='isim' placeholder='Personel Adı Soyadı' required> 
+                <input type='number' step='0.01' name='sabit_maas' placeholder='Aylık Maaş' required> 
+                <input type='text' name='pin' placeholder='Giriş PIN' maxlength='4' required> 
+                <input type='submit' value='Personel Tanımla' style='padding:6px 15px; background:#007bff; color:#fff; border:none; cursor:pointer;'>
             </form>
             <div>
                 <a href='/excel-rapor' style='padding:8px 12px; background:#28a745; color:#fff; text-decoration:none; font-weight:bold; border-radius:4px; margin-right:10px;'>📥 Excel Raporu</a>
@@ -186,44 +174,25 @@ def ortak_giris():
     cursor.execute("SELECT id, isim FROM personeller ORDER BY isim ASC")
     personeller = cursor.fetchall()
     conn.close()
-    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
+    options = "".join([f"<option value='{p}'>{p}</option>" for p in personeller])
     
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Paneli</title>
-    <style>body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:30px;}} .card{{background:#fff; color:#000; padding:25px; margin:15px auto; max-width:400px; border-radius:12px;}} select, input, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold; box-sizing:border-box;}} button{{color:#fff; border:none; cursor:pointer;}} .btn-g{{background:#28a745;}} .btn-c{{background:#dc3545;}} .status{{font-size:14px; margin-top:12px; color:orange; font-weight:bold; line-height:1.4;}}</style>
+    <style>body{{font-family:sans-serif; background:#212529; color:#fff; text-align:center; padding-top:30px;}} .card{{background:#fff; color:#000; padding:25px; margin:15px auto; max-width:400px; border-radius:12px;}} select, input, button{{width:100%; padding:14px; margin-top:15px; border-radius:6px; font-size:16px; font-weight:bold; box-sizing:border-box;}} button{{color:#fff; border:none; cursor:pointer;}} .btn-g{{background:#28a745;}} .btn-c{{background:#dc3545;}} .status{{font-size:14px; margin-top:12px; color:orange; font-weight:bold;}}</style>
     <script>
         function islemYap(islemTipi) {{
             var p_id = document.getElementById("personel_select").value;
             var pin = document.getElementById("pin_input").value;
             var st = document.getElementById("status_text");
             if(!p_id || !pin) {{ alert("Lütfen adınızı seçin ve şifrenizi girin!"); return; }}
-            
             if (navigator.geolocation) {{
-                st.innerText = "⏳ Gerçek uydu sinyalleri taranıyor... Lütfen açık alanda veya cam kenarında bekleyin.";
-                navigator.geolocation.getCurrentPosition(function(position) {{
-                    var veri = {{
-                        personel_id: p_id,
-                        pin_kodu: pin,
-                        islem: islemTipi,
-                        enlem: position.coords.latitude,
-                        boylam: position.coords.longitude
-                    }};
+                st.innerText = "⏳ Gerçek uydu sinyalleri taranıyor... Lütfen cam kenarında bekleyin.";
+                navigator.geolocation.getCurrentPosition(function(pos) {{
+                    var veri = {{ personel_id: p_id, pin_kodu: pin, islem: islemTipi, enlem: pos.coords.latitude, boylam: pos.coords.longitude }};
                     st.innerText = "⏳ Konum doğrulanıyor...";
-                    fetch('/konum-dogrula', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify(veri)
-                    }})
-                    .then(response => response.json())
-                    .then(data => {{
-                        alert(data.mesaj);
-                        if(data.durum === "ok") {{ location.reload(); }}
-                        st.innerText = "";
-                    }});
-                }}, function(error) {
-                    alert("❌ GPS Bağlantı Hatası! Telefon konum servisini açıp Chrome/Safari tarayıcısına izin vermelisiniz.");
-                    st.innerText = "";
-                }, {{ enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }});
+                    fetch('/konum-dogrula', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify(veri) }})
+                    .then(r => r.json()).then(data => {{ alert(data.mesaj); if(data.durum === "ok") {{ location.reload(); }} st.innerText = ""; }});
+                }}, function(err) {{ alert("❌ GPS Kapalı! Konum servisini açıp tarayıcıya izin verin."); st.innerText = ""; }}, {{ enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }});
             }} else {{ alert("Cihaz GPS desteklemiyor!"); }}
         }}
     </script>
@@ -246,11 +215,9 @@ def konum_dogrula():
     islem = data.get("islem")
     kul_enlem = float(data.get("enlem"))
     kul_boylam = float(data.get("boylam"))
-    
     mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
     if mesafe > GECERLI_MESAFE_METRE:
-        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nEn fazla izin verilen sapma sınırı: {GECERLI_MESAFE_METRE} metredir.\n\n💡 Çözüm: Telefonunun konum ayarlarından 'Tam/Hassas Konum' özelliğini açıp dükkan içinde yer değiştirerek tekrar basmayı dene."})
-
+        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir.\n\n💡 İpucu: Telefonun konum ayarlarından 'Tam/Hassas Konum' özelliğini açıp dükkan içinde yer değiştirerek tekrar dene."})
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("SELECT isim, pin_kodu FROM personeller WHERE id = ?", (p_id,))
@@ -258,14 +225,12 @@ def konum_dogrula():
     if not res_p or str(res_p[1]) != str(pin):
         conn.close()
         return jsonify({"durum": "hata", "mesaj": "❌ HATA: PIN şifreniz yanlış!"})
-        
     isim = res_p[0]
     simdi = datetime.now()
     bugun = simdi.strftime("%Y-%m-%d")
     saat_str = simdi.strftime("%H:%M:%S")
     cursor.execute("SELECT id, giris_saati FROM kayitlar WHERE personel_id = ? AND cikis_saati IS NULL ORDER BY id DESC LIMIT 1", (p_id,))
     acik_kayit = cursor.fetchone()
-    
     if islem == "GİRİŞ":
         if acik_kayit: mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
         else:
@@ -274,11 +239,7 @@ def konum_dogrula():
     else:
         if not acik_kayit: mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
         else:
-            k_id, g_saat = acik_kayit
-            g_zamani = datetime.strptime(f"{bugun} {g_saat}", "%Y-%m-%d %H:%M:%S")
-            calisilan_saat = round((simdi - g_zamani).total_seconds() / 3600, 2)
-            fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
-            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, k_id))
+            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, 0.0, acik_kayit[0]))
             mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı. Fark: {round(mesafe, 1)} Metre."
     conn.commit()
     conn.close()
