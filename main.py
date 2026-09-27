@@ -12,13 +12,18 @@ app = Flask(__name__)
 # 📌 MİLLET MAHALLESİ NO:64/1 KESİN BİNA KOORDİNATLARI VE TOLERANS ÇAPI
 SIRKET_ENLEM = 40.20145
 SIRKET_BOYLAM = 29.11718
-GECERLI_MESAFE_METRE = 60.0  # Kapalı alan uydu sapmalarını çözen ideal kurumsal daire çapı
+GECERLI_MESAFE_METRE = 60.0
 
 os.makedirs("static", exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
+    
+    # 🔥 ÇAKIŞMAYI ÖNLEMEK İÇİN ESKİ HATALI TABLOLARI SİLİP SIFIRLIYORUZ
+    cursor.execute("DROP TABLE IF EXISTS personeller")
+    cursor.execute("DROP TABLE IF EXISTS yonetici")
+    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS personeller (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,13 +51,12 @@ def init_db():
             sifre TEXT NOT NULL
         )
     """)
-    cursor.execute("SELECT COUNT(*) FROM yonetici")
-    if cursor.fetchone() == 0:
-        cursor.execute("INSERT INTO yonetici (id, kullanici_adi, sifre) VALUES (1, 'admin', '123456')")
+    cursor.execute("INSERT OR REPLACE INTO yonetici (id, kullanici_adi, sifre) VALUES (1, 'admin', '123456')")
     conn.commit()
     conn.close()
 
 init_db()
+
 def mesafe_hesapla(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1 = math.radians(lat1)
