@@ -12,14 +12,14 @@ from flask_httpauth import HTTPBasicAuth
 app = Flask(__name__)
 auth = HTTPBasicAuth()
 
-# 🔐 1. AYAR: ADMİN PANELİ GİRİŞ BİLGİLERİNİZİ BURADAN DEĞİŞTİRİN
+# 🔐 1. AYAR: ADMİN PANELİ GİRİŞ BİLGİLERİNİZ
 ADMIN_KULLANICI = "admin"
 ADMIN_SIFRE = "123456"
 
 # 📌 2. AYAR: ŞİRKETİNİZİN BURSA YILDIRIM KOORDİNATLARI
 SIRKET_ENLEM = 40.1828
 SIRKET_BOYLAM = 29.0984
-GECERLI_MESAFE_METRE = 30.0  # GPS dalgalanmaları için tolerans 30 metreye çıkarıldı
+GECERLI_MESAFE_METRE = 30.0  # GPS toleransı 30 metre
 
 @auth.verify_password
 def verify_password(username, password):
@@ -67,7 +67,7 @@ def mesafe_hesapla(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# 🖥️ ŞİFRELİ ADMİN PANELİ (Giriş Saatleri, Maaşlar ve Prim Girişleri)
+# 🖥️ ŞİFRELİ ADMİN PANELİ
 @app.route("/")
 @auth.login_required
 def admin_paneli():
@@ -169,7 +169,8 @@ def admin_paneli():
     """
     return render_template_string(html)
 
-# 📲 2. ORTAK GİRİŞ EKRANI (Hassas GPS ve Cihaz Kilidi Entegre Edildi)
+# 📲 2. ORTAK GİRİŞ EKRANI
+@app.route("/ortak-giri") # Not: URL uyumu için ortak-giris olarak kullanılacak
 @app.route("/ortak-giris")
 def ortak_giris():
     conn = sqlite3.connect("takip.db")
@@ -195,7 +196,7 @@ def ortak_giris():
             document.getElementById("guide").style.display = "none";
             
             if (navigator.geolocation) {{
-                navigator.geolocation.getCurrentPosition(function(position) {
+                                navigator.geolocation.getCurrentPosition(function(position) {
                     var veri = {
                         personel_id: p_id,
                         islem: islemTipi,
@@ -224,7 +225,7 @@ def ortak_giris():
         }
     </script>
     </head><body><div class='card'>
-        <h2 style='margin-top:0; color:#333;'>🔐 Güvenli Ortak Giriş Paneli</h2>
+        <h2 style='margin-top:0; color:#333;'>📍 Konum Doğrulamalı Giriş</h2>
         <p style='color:#666;'>İsminizi seçip işleme basınız (Cihazınız otomatik kilitlenecektir):</p>
         <select id='personel_select'><option value=''>--- İsminizi Seçin ---</option>{options}</select>
         <button class='btn-giris' onclick="islemYap('GİRİŞ')">📍 KONUMU DOĞRULA & GİRİŞ YAP</button>
@@ -249,20 +250,17 @@ def konum_dogrula():
     kul_boylam = float(data.get("boylam"))
     fingerprint = data.get("fingerprint")
     
-    # 📐 GPS Mesafe Kontrolü
     mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
     if mesafe > GECERLI_MESAFE_METRE:
         return jsonify({"mesaj": f"❌ İŞLEM REDDEDİLDİ!\nŞirket sınırları dışındasınız.\nUzaklık: {round(mesafe, 1)} metre. Sınırımız {GECERLI_MESAFE_METRE} metredir!"})
 
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
-    
-    # 🔒 CİHAZ KİLİDİ KONTROLÜ
     cursor.execute("SELECT isim, cihaz_id FROM personeller WHERE id = ?", (p_id,))
-    isim, db_cihaz = cursor.fetchone()
+    res_p = cursor.fetchone()
+    isim, db_cihaz = res_p[0], res_p[1]
     
     if db_cihaz is None:
-        # Cihaz ilk kez tanımlanıyor, kilitle!
         cursor.execute("UPDATE personeller SET cihaz_id = ? WHERE id = ?", (fingerprint, p_id))
     elif db_cihaz != fingerprint:
         conn.close()
@@ -281,22 +279,20 @@ def konum_dogrula():
         else:
             cursor.execute("INSERT INTO kayitlar (personel_id, tarih, giris_saati) VALUES (?, ?, ?)", (p_id, bugun, saat_str))
             mesaj = f"✓ BAŞARILI!\n{isim}, GİRİŞ kaydınız saat {saat_str} olarak sisteme işlendi. İyi çalışmalar!"
-    else: # ÇIKIŞ
+    else:
         if not acik_kayit:
             mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
         else:
-            kayit_id, giris_saati_str = acik_kayit
+            kayit_id, giris_saati_str = acik_kayit[0], acik_kayit[1]
             giris_zamani = datetime.strptime(f"{bugun} {giris_saati_str}", "%Y-%m-%d %H:%M:%S")
             calisilan_saat = round((simdi - giris_zamani).total_seconds() / 3600, 2)
-            fancy_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
-            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fancy_mesai, kayit_id))
-            mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\nToplam Süre: {calisilan_saat} saat. (Mesai: {fancy_mesai} Saat)"
+            fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
+            cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, kayit_id))
+            mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\nToplam Süre: {calisilan_saat} saat. (Mesai: {fazla_mesai} Saat)"
             
     conn.commit()
     conn.close()
     return jsonify({"mesaj": mesaj})
-
-# 👥 PERSONELİN SADECE KENDİ SAATLERİNİ GÖREBİLECEĞİ ÖZEL EKRAN
 @app.route("/personel-ekran")
 def personel_ekran():
     conn = sqlite3.connect("takip.db")
@@ -333,7 +329,7 @@ def personel_ekran():
             <select name='p_id'><option value=''>--- Adınızı Seçin ---</option>{options}</select>
             <input type='submit' value='Sorgula'>
         </form>
-        {f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{toplam_mesai_saati} Saat</span></h4>" if secili_personel else ""}
+        {{f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{toplam_mesai_saati} Saat</span></h4>" if secili_personel else ""}}
         <table>
             <tr><th>Tarih</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>
             {gecmis_rows}
@@ -356,7 +352,7 @@ def cihaz_sifirla(p_id):
 @app.route("/ortak-qr-indir")
 @auth.login_required
 def ortak_qr_indir():
-    qr_url = f"https://{request.host}/ortak-giris"
+    qr_url = f"https://{{request.host}}/ortak-giris"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -407,20 +403,19 @@ def excel_rapor():
     conn = sqlite3.connect("takip.db")
     query = """
     SELECT k.tarih AS [Tarih], p.isim AS [Personel Adı], p.sabit_maas AS [Sabit Maaş (TL)],
-        k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], 
-        k.fazla_mesai_saati AS [Fazla Mesai (Saat)]
+           k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], 
+           k.fazla_mesai_saati AS [Fazla Mesai (Saat)]
     FROM kayitlar k 
     JOIN personeller p ON k.personel_id = p.id
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
-    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
-    
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5050, debug=False)
+
