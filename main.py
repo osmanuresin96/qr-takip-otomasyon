@@ -10,17 +10,9 @@ from flask import Flask, request, render_template_string, redirect, send_file, j
 
 app = Flask(__name__)
 
-# 🔐 ADMİN PANELİ GİRİŞ BİLGİLERİNİZ
-ADMIN_USER = "admin"
-ADMIN_PASS = "123456"
-
-# 📌 BURSA YILDIRIM DÜKKAN KOORDİNATLARINIZ VE 10 METRE HASSAS GPS SINIRI
-SIRKET_ENLEM = 40.1828
-SIRKET_BOYLAM = 29.0984
-GECERLI_MESAFE_METRE = 10.0
-
 os.makedirs("static/qr_codes", exist_ok=True)
 
+# Gelişmiş Dinamik Veritabanı Kurulumu
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -45,6 +37,23 @@ def init_db():
             FOREIGN KEY(personel_id) REFERENCES personeller(id) ON DELETE CASCADE
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ayarlar (
+            id INTEGER PRIMARY KEY,
+            enlem REAL NOT NULL,
+            boylam REAL NOT NULL,
+            mesafe REAL NOT NULL,
+            admin_user TEXT NOT NULL,
+            admin_pass TEXT NOT NULL
+        )
+    """)
+    # Varsayılan Fabrika Ayarları (Millet Mahallesi dükkan konumunuz tanımlandı)
+    cursor.execute("SELECT COUNT(*) FROM ayarlar")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("""
+            INSERT INTO ayarlar (id, enlem, boylam, mesafe, admin_user, admin_pass) 
+            VALUES (1, 40.20145, 29.11718, 30.0, 'admin', '123456')
+        """)
     conn.commit()
     conn.close()
 
@@ -59,20 +68,38 @@ def mesafe_hesapla(lat1, lon1, lat2, lon2):
     a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
+
+# Oturum Doğrulama Yardımcısı
+def admin_kontrol():
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT admin_user, admin_pass FROM ayarlar WHERE id = 1")
+    db_user, db_pass = cursor.fetchone()
+    conn.close()
+    
+    auth_cookie = request.cookies.get("admin_session", "")
+    beklenen = f"{db_user}_{db_pass}"
+    return auth_cookie == beklenen
 @app.route("/login", methods=["GET", "POST"])
 def login_sayfasi():
     hata = ""
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT admin_user, admin_pass FROM ayarlar WHERE id = 1")
+    db_user, db_pass = cursor.fetchone()
+    conn.close()
+
     if request.method == "POST":
         u = request.form.get("username")
         p = request.form.get("password")
-        if u == ADMIN_USER and p == ADMIN_PASS:
+        if u == db_user and p == db_pass:
             response = redirect("/")
-            response.set_cookie("admin_session", "aktif_oturum_guvenli")
+            response.set_cookie("admin_session", f"{db_user}_{db_pass}")
             return response
         hata = "❌ Kullanıcı adı veya şifre hatalı!"
         
     return render_template_string(f"""
-    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Yap</title>
+    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Yönetici Girişi</title>
     <style>body{{font-family:sans-serif; background:#212529; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;}} .login-card{{background:#fff; padding:30px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.3); width:100%; max-width:360px;}} input{{width:100%; padding:12px; margin-top:10px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box; font-size:16px;}} input[type=submit]{{background:#007bff; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:20px;}}</style>
     </head><body><div class='login-card'>
         <h3 style='margin:0 0 10px 0; text-align:center; color:#333;'>🔐 Yönetici Girişi</h3>
@@ -87,11 +114,15 @@ def login_sayfasi():
 
 @app.route("/")
 def admin_paneli():
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli":
+    if not admin_kontrol():
         return redirect("/login")
         
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
+    
+    cursor.execute("SELECT enlem, boylam, mesafe FROM ayarlar WHERE id = 1")
+    s_enlem, s_boylam, s_mesafe = cursor.fetchone()
+    
     cursor.execute("SELECT id, isim, sabit_maas, ek_ucret, pin_kodu, cihaz_id FROM personeller")
     personeller_raw = cursor.fetchall()
     
@@ -112,7 +143,7 @@ def admin_paneli():
         if son_hareket and son_hareket[0] and not son_hareket[1]:
             durum = "İçeride (Çalışıyor)"
 
-        c_durum = f"<span style='color:green;'>🔒 Bağlı</span> <a href='/c-sifirla/{p_id}' style='color:red; font-size:11px;'>[Sıfırla]</a>" if cihaz else "<span style='color:orange;'>Bekleniyor</span>"
+        c_durum = f"<span style='color:green;'>🔒 Bağlı</span> <a href='/c-sifirla/{p_id}' style='color:red; font-size:11px;'>[Sıfırla]</a>" if cihaz else "<span style='color:orange;'>Cihaz Bekleniyor</span>"
 
         rows += f"""
         <tr>
@@ -138,14 +169,30 @@ def admin_paneli():
         """
     cursor.execute("SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati FROM kayitlar k JOIN personeller p ON k.personel_id = p.id ORDER BY k.id DESC LIMIT 30")
     gecmis_raw = cursor.fetchall()
-    gecmis_rows = "".join([f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{g[3] if g[3] else 'İçeride'}</td><td>{g[4]} Saat</td></tr>" for g in gecmis_raw])
+    gecmis_rows = ""
+    for g in gecmis_raw:
+        c_info = g[3] if g[3] else "İçeride"
+        gecmis_rows += f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{c_info}</td><td>{g[4]} Saat</td></tr>"
     conn.close()
 
     html = f"""
     <html><head><meta charset='utf-8'><title>Yönetim Paneli</title>
-    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:25px;}} .container{{max-width:1350px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .btn-qr{{background:#6f42c1; color:#fff; padding:10px 15px; text-decoration:none; border-radius:4px; font-weight:bold;}} .btn-excel{{padding:10px 15px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
+    <style>body{{font-family:Segoe UI,sans-serif; background:#f4f6f9; padding:25px;}} .container{{max-width:1350px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .btn-qr{{background:#6f42c1; color:#fff; padding:10px 15px; text-decoration:none; border-radius:4px; font-weight:bold;}} .btn-excel{{padding:10px 15px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number], input[type=password]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
     </head><body><div class='container'>
         <h2>🛡️ Şifreli Kurumsal Personel Maaş & Güvenli QR Otomasyonu</h2>
+        
+        <!-- 📍 DİNAMİK KONUM AYARI FORMU (ŞİFRE DOĞRULAMALI) -->
+        <div style='background: #eef2f7; border-left: 5px solid #6f42c1; padding:15px; border-radius:6px; margin-bottom:20px;'>
+            <form action='/konum-guncelle' method='POST' style='margin:0;'>
+                <span style='color:#4a148c; font-weight:bold;'>📍 Dinamik Konum Ayarları:</span> &nbsp;
+                Enlem: <input type='text' name='enlem' value='{s_enlem}' style='width:100px;' required>
+                Boylam: <input type='text' name='boylam' value='{s_boylam}' style='width:100px;' required>
+                Çap Çevre (Metre): <input type='number' name='mesafe' value='{s_mesafe}' style='width:60px;' required>
+                &nbsp;&nbsp;🔑 Doğrulama Şifresi: <input type='password' name='sifre_onay' placeholder='Admin Şifresi' style='width:120px;' required>
+                <input type='submit' value='Ayarları Kaydet' style='padding:6px 12px; background:#6f42c1; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;'>
+            </form>
+        </div>
+
         <div class='form-box'>
             <form action='/p-ekle' method='POST' style='margin:0;'>
                 <input type='text' name='isim' placeholder='Personel Adı Soyadı' style='width:220px;' required> 
@@ -171,6 +218,39 @@ def admin_paneli():
     </div></body></html>
     """
     return render_template_string(html)
+# 🔐 GİZLİ ŞİFRE DEĞİŞTİRME SAYFASI (Sadece adresi doğrudan yazan girebilir)
+@app.route("/gizli-ayarlar", methods=["GET", "POST"])
+def gizli_ayarlar():
+    if not admin_kontrol():
+        return redirect("/login")
+        
+    mesaj = ""
+    if request.method == "POST":
+        yeni_u = request.form.get("yeni_user")
+        yeni_p = request.form.get("yeni_pass")
+        if yeni_u and yeni_p:
+            conn = sqlite3.connect("takip.db")
+            cursor = conn.cursor()
+            cursor.execute("UPDATE ayarlar SET admin_user = ?, admin_pass = ? WHERE id = 1", (yeni_u, yeni_p))
+            conn.commit()
+            conn.close()
+            mesaj = "✅ Giriş bilgileri başarıyla güncellendi! Lütfen yeni bilgilerle giriş yapın."
+            
+    return render_template_string(f"""
+    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Gizli Ayarlar</title>
+    <style>body{{font-family:sans-serif; background:#1e222b; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#fff;}} .card{{background:#fff; color:#333; padding:30px; border-radius:12px; width:100%; max-width:380px;}} input{{width:100%; padding:12px; margin-top:10px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box;}}</style>
+    </head><body><div class='card'>
+        <h3 style='margin:0 0 10px 0; text-align:center;'>🔐 Gizli Şifre Değiştirme</h3>
+        <p style='color:green; font-weight:bold; font-size:14px; text-align:center;'>{mesaj}</p>
+        <form method='POST'>
+            Yeni Kullanıcı Adı: <input type='text' name='yeni_user' required>
+            Yeni Giriş Şifresi: <input type='text' name='yeni_pass' required>
+            <input type='submit' value='Bilgileri Güncelle' style='background:#6f42c1; color:#fff; border:none; font-weight:bold; cursor:pointer; margin-top:15px;'>
+        </form>
+        <br><a href='/' style='display:block; text-align:center; color:#007bff; text-decoration:none;'>← Paneline Geri Dön</a>
+    </div></body></html>
+    """)
+
 @app.route("/ortak-giris")
 def ortak_giris():
     conn = sqlite3.connect("takip.db")
@@ -205,7 +285,7 @@ def ortak_giris():
     </head><body><div class='card'>
         <h2 style='margin-top:0; color:#333;'>🔐 Kurumsal Doğrulama Paneli</h2>
         <p style='color:#666;'>Adınızı seçin, 4 haneli PIN şifrenizi girip işlem yapın:</p>
-        <select id='personel_select'><option value=''>--- İsminizi Seçin ---</option>{options}</select>
+        <select id='personel_select'><option value=''>--- Adınızı Seçin ---</option>{options}</select>
         <input type='password' id='pin_input' placeholder='PIN Şifreniz (••••)' maxlength='4' inputmode='numeric'>
         <button class='btn-giris' onclick="islemYap('GİRİŞ')">📍 KONUMU DOĞRULA & GİRİŞ YAP</button>
         <button class='btn-cikis' onclick="islemYap('ÇIKIŞ')">📍 KONUMU DOĞRULA & ÇIKIŞ YAP</button>
@@ -228,12 +308,16 @@ def konum_dogrula():
     kul_boylam = float(data.get("boylam"))
     fingerprint = data.get("fingerprint")
     
-    mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
-    if mesafe > GECERLI_MESAFE_METRE:
-        return jsonify({"mesaj": f"❌ İŞLEM REDDEDİLDİ!\nŞirket sınırları dışındasınız.\nUzaklık: {round(mesafe, 1)} metre. Sınırımız {GECERLI_MESAFE_METRE} metredir!"})
-
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
+    cursor.execute("SELECT enlem, boylam, mesafe FROM ayarlar WHERE id = 1")
+    sirket_enlem, sirket_boylam, sirket_mesafe = cursor.fetchone()
+    
+    mesafe = mesafe_hesapla(sirket_enlem, sirket_boylam, kul_enlem, kul_boylam)
+    if mesafe > sirket_mesafe:
+        conn.close()
+        return jsonify({"mesaj": f"❌ İŞLEM REDDEDİLDİ!\nŞirket sınırları dışındasınız.\nUzaklık: {round(mesafe, 1)} metre. Sınırımız {sirket_mesafe} metredir!"})
+
     cursor.execute("SELECT isim, pin_kodu, cihaz_id FROM personeller WHERE id = ?", (p_id,))
     res_p = cursor.fetchone()
     
@@ -293,7 +377,8 @@ def personel_ekran():
         cursor.execute("SELECT tarih, giris_saati, cikis_saati, fazla_mesai_saati FROM kayitlar WHERE personel_id = ? ORDER BY id DESC", (p_id,))
         kayitlar = cursor.fetchall()
         for k in kayitlar:
-            gecmis_rows += f"<tr><td>{k[0]}</td><td>{k[1]}</td><td>{k[2] if k[2] else 'İçeride'}</td><td>{k[3]} Saat</td></tr>"
+            c_info = k[2] if k[2] else "İçeride"
+            gecmis_rows += f"<tr><td>{k[0]}</td><td>{k[1]}</td><td>{c_info}</td><td>{k[3]} Saat</td></tr>"
             toplam_mesai_saati += k[3]
     conn.close()
     options = "".join([f"<option value='{p[0]}' {'selected' if p_id==str(p[0]) else ''}>{p[1]}</option>" for p in personeller])
@@ -311,9 +396,32 @@ def personel_ekran():
     p_info = f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{toplam_mesai_saati} Saat</span></h4>" if secili_personel else ""
     return render_template_string(html.replace("{{personel_bilgi}}", p_info))
 
+@app.route("/konum-guncelle", methods=["POST"])
+def konum_guncelle():
+    if not admin_kontrol(): return redirect("/login")
+    sifre_onay = request.form['sifre_onay']
+    
+    conn = sqlite3.connect("takip.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT admin_pass FROM ayarlar WHERE id = 1")
+    db_pass = cursor.fetchone()[0]
+    
+    if str(sifre_onay) != str(db_pass):
+        conn.close()
+        return "<html><body><script>alert('❌ HATA: Onay şifresi yanlış! Değişiklik reddedildi.'); window.location.href='/';</script></body></html>"
+        
+    enlem = float(request.form['enlem'])
+    boylam = float(request.form['boylam'])
+    mesafe = float(request.form['mesafe'])
+    
+    cursor.execute("UPDATE ayarlar SET enlem=?, boylam=?, mesafe=? WHERE id=1", (enlem, boylam, mesafe))
+    conn.commit()
+    conn.close()
+    return redirect("/")
+
 @app.route("/c-sifirla/<int:p_id>")
 def cihaz_sifirla(p_id):
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("UPDATE personeller SET cihaz_id = NULL WHERE id = ?", (p_id,))
@@ -323,7 +431,7 @@ def cihaz_sifirla(p_id):
 
 @app.route("/ortak-qr-indir")
 def ortak_qr_indir():
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     qr_url = f"https://{request.host}/ortak-giris"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(qr_url)
@@ -336,7 +444,7 @@ def ortak_qr_indir():
 
 @app.route("/p-ekle", methods=["POST"])
 def personel_ekle():
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     isim = request.form['isim']
     sabit_maas = float(request.form['sabit_maas'])
     pin = request.form['pin']
@@ -349,7 +457,7 @@ def personel_ekle():
 
 @app.route("/p-sil/<int:p_id>")
 def personel_sil(p_id):
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM personeller WHERE id = ?", (p_id,))
@@ -360,7 +468,7 @@ def personel_sil(p_id):
 
 @app.route("/ek-ucret", methods=["POST"])
 def ek_ucret():
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     p_id = int(request.form['p_id'])
     miktar = float(request.form['miktar'])
     conn = sqlite3.connect("takip.db")
@@ -372,7 +480,7 @@ def ek_ucret():
 
 @app.route("/excel-rapor")
 def excel_rapor():
-    if request.cookies.get("admin_session") != "aktif_oturum_guvenli": return redirect("/login")
+    if not admin_kontrol(): return redirect("/login")
     conn = sqlite3.connect("takip.db")
     query = "SELECT k.tarih AS [Tarih], p.isim AS [Personel Adı], p.sabit_maas AS [Sabit Maaş (TL)], k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], k.fazla_mesai_saati AS [Fazla Mesai (Saat)] FROM kayitlar k JOIN personeller p ON k.personel_id = p.id"
     df = pd.read_sql_query(query, conn)
