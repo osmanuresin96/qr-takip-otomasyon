@@ -12,14 +12,14 @@ from flask_httpauth import HTTPBasicAuth
 app = Flask(__name__)
 auth = HTTPBasicAuth()
 
-# 🔐 1. AYAR: ADMİN PANELİ GİRİŞ BİLGİLERİNİZ
+# 🔐 ADMİN PANELİ GİRİŞ BİLGİLERİNİZ
 ADMIN_KULLANICI = "admin"
 ADMIN_SIFRE = "123456"
 
-# 📌 2. AYAR: ŞİRKETİNİZİN BURSA YILDIRIM KOORDİNATLARI
+# 📌 ŞİRKETİNİZİN BURSA YILDIRIM KOORDİNATLARI & GPS TOLERANSI
 SIRKET_ENLEM = 40.1828
 SIRKET_BOYLAM = 29.0984
-GECERLI_MESAFE_METRE = 30.0  # GPS toleransı 30 metre
+GECERLI_MESAFE_METRE = 30.0
 
 @auth.verify_password
 def verify_password(username, password):
@@ -66,8 +66,6 @@ def mesafe_hesapla(lat1, lon1, lat2, lon2):
     a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
-
-# 🖥️ ŞİFRELİ ADMİN PANELİ
 @app.route("/")
 @auth.login_required
 def admin_paneli():
@@ -158,18 +156,17 @@ def admin_paneli():
         <h3>👥 Personel Maaş, Prim ve Cihaz Güvenlik Listesi</h3>
         <table>
             <tr><th>Personel</th><th>Durum</th><th>Cihaz Kilidi</th><th>Sabit Maaş</th><th>S. Ücret</th><th>Toplam Mesai</th><th>Mesai Kazancı</th><th>Prim</th><th>Toplam Hak Edilen</th><th>Prim İşlemi</th><th>Yönetim</th></tr>
-            {rows}
+            {{rows}}
         </table>
         <h3>📋 Genel Giriş / Çıkış Hareket Geçmişi</h3>
         <table>
             <tr><th>Tarih</th><th>Personel Adı</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Yazılan Fazla Mesai</th></tr>
-            {gecmis_rows}
+            {{gecmis_rows}}
         </table>
     </div></body></html>
-    """
+    """.replace("{{rows}}", rows).replace("{{gecmis_rows}}", gecmis_rows)
     return render_template_string(html)
-
-# 📲 2. ORTAK GİRİŞ EKRANI
+# 📲 ORTAK GİRİŞ EKRANI
 @app.route("/ortak-giris")
 def ortak_giris():
     conn = sqlite3.connect("takip.db")
@@ -198,33 +195,30 @@ def ortak_giris():
                 navigator.geolocation.getCurrentPosition(function(position) {{
                     var veri = {{
                         personel_id: p_id,
-                navigator.geolocation.getCurrentPosition(function(position) {
-                    var veri = {
-                        personel_id: p_id,
                         islem: islemTipi,
                         enlem: position.coords.latitude,
                         boylam: position.coords.longitude,
                         fingerprint: cihazIdUret()
-                    };
+                    }};
                     
-                    fetch('/konum-dogrula', {
+                    fetch('/konum-dogrula', {{
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify(veri)
-                    })
+                    }})
                     .then(response => response.json())
-                    .then(data => {
+                    .then(data => {{
                         alert(data.mesaj);
                         location.reload();
-                    });
-                }, function(error) {
+                    }});
+                }}, function(error) {{
                     document.getElementById("guide").style.display = "block";
                     alert("⚠️ GPS Konum Alınamadı! Lütfen konum servislerinizi ve yüksek hassasiyeti açıp tekrar deneyin.");
-                }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
-            } else {
+                }}, {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }});
+            }} else {{
                 alert("Telefonunuz GPS desteklemiyor!");
-            }
-        }
+            }}
+        }}
     </script>
     </head><body><div class='card'>
         <h2 style='margin-top:0; color:#333;'>📍 Konum Doğrulamalı Giriş</h2>
@@ -295,13 +289,13 @@ def konum_dogrula():
     conn.commit()
     conn.close()
     return jsonify({"mesaj": mesaj})
-
 @app.route("/personel-ekran")
 def personel_ekran():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
     cursor.execute("SELECT id, isim FROM personeller")
     personeller = cursor.fetchall()
+    
     p_id = request.args.get("p_id")
     gecmis_rows = ""
     secili_personel = ""
@@ -311,6 +305,7 @@ def personel_ekran():
         cursor.execute("SELECT isim FROM personeller WHERE id = ?", (p_id,))
         res_p = cursor.fetchone()
         secili_personel = res_p[0] if res_p else ""
+        
         cursor.execute("SELECT tarih, giris_saati, cikis_saati, fazla_mesai_saati FROM kayitlar WHERE personel_id = ? ORDER BY id DESC", (p_id,))
         kayitlar = cursor.fetchall()
         for k in kayitlar:
@@ -330,7 +325,7 @@ def personel_ekran():
             <select name='p_id'><option value=''>--- Adınızı Seçin ---</option>{options}</select>
             <input type='submit' value='Sorgula'>
         </form>
-        {{f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{toplam_mesai_saati} Saat</span></h4>" if secili_personel else ""}}
+        {{personel_bilgi}}
         <table>
             <tr><th>Tarih</th><th>Giriş Saati</th><th>Çıkış Saati</th><th>Fazla Mesai</th></tr>
             {gecmis_rows}
@@ -338,7 +333,8 @@ def personel_ekran():
         <br><a href='/ortak-giris' style='color:#007bff; text-decoration:none; font-weight:bold;'>← Giriş/Çıkış Ekranına Dön</a>
     </div></body></html>
     """
-    return render_template_string(html)
+    p_info = f"<h4>👤 Personel: {secili_personel} | ⏱️ Toplam Fazla Mesai: <span style='color:red;'>{toplam_mesai_saati} Saat</span></h4>" if secili_personel else ""
+    return render_template_string(html.replace("{{personel_bilgi}}", p_info))
 
 @app.route("/cihaz-sifirla/<int:p_id>")
 @auth.login_required
@@ -403,20 +399,18 @@ def ek_ucret():
 def excel_rapor():
     conn = sqlite3.connect("takip.db")
     query = """
-    SELECT k.tarih AS [Tarih], p.isim AS [Personel Adı], p.sabit_maas AS [Sabit Maaş (TL)],
-           k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], 
-           k.fazla_mesai_saati AS [Fazla Mesai (Saat)]
-    FROM kayitlar k 
-    JOIN personeller p ON k.personel_id = p.id
+        SELECT k.tarih AS [Tarih], p.isim AS [Personel Adı], p.sabit_maas AS [Sabit Maaş (TL)],
+               k.giris_saati AS [Giriş Saati], k.cikis_saati AS [Çıkış Saati], 
+               k.fazla_mesai_saati AS [Fazla Mesai (Saat)]
+        FROM kayitlar k 
+        JOIN personeller p ON k.personel_id = p.id
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
-    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
-    
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
 if __name__ == "__main__":
