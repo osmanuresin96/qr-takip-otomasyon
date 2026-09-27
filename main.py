@@ -12,9 +12,10 @@ app = Flask(__name__)
 # 📌 MİLLET MAHALLESİ NO:64/1 KESİN BİNA KOORDİNATLARI VE TOLERANS ÇAPI
 SIRKET_ENLEM = 40.20145
 SIRKET_BOYLAM = 29.11718
-GECERLI_MESAFE_METRE = 60.0  # Bina içi sapmaları tolere eden ideal güvenli çap
+GECERLI_MESAFE_METRE = 60.0  # Kapalı alan uydu sapmalarını çözen ideal kurumsal daire çapı
 
 os.makedirs("static", exist_ok=True)
+
 def init_db():
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -52,7 +53,6 @@ def init_db():
     conn.close()
 
 init_db()
-
 def mesafe_hesapla(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1 = math.radians(lat1)
@@ -70,6 +70,7 @@ def admin_oturum_kontrol():
     db_user, db_pass = cursor.fetchone()
     conn.close()
     return request.cookies.get("admin_session") == f"{db_user}_{db_pass}"
+
 @app.route("/login", methods=["GET", "POST"])
 def login_sayfasi():
     hata = ""
@@ -97,7 +98,6 @@ def login_sayfasi():
         </form>
     </div></body></html>
     """)
-
 @app.route("/gizli-kasa-ayarlari", methods=["GET", "POST"])
 def gizli_kasa_ayarlari():
     if not admin_oturum_kontrol(): return redirect("/login")
@@ -124,6 +124,7 @@ def gizli_kasa_ayarlari():
         <br><a href='/' style='display:block; text-align:center; color:#007bff; text-decoration:none;'>← Paneline Dön</a>
     </div></body></html>
     """)
+
 @app.route("/")
 def admin_paneli():
     if not admin_oturum_kontrol(): return redirect("/login")
@@ -136,18 +137,19 @@ def admin_paneli():
         p_id, isim, sabit_maas, ek_ucret, pin = p
         cursor.execute("SELECT SUM(fazla_mesai_saati) FROM kayitlar WHERE personel_id = ?", (p_id,))
         res = cursor.fetchone()
-        toplam_mesai = res[0] if res and res[0] is not None else 0
+        toplam_mesai = res if res and res is not None else 0
         saatlik_ucret = round(sabit_maas / 225, 2)
         mesai_kazanci = round(toplam_mesai * saatlik_ucret * 1.5, 2)
         toplam_hakedis = round(sabit_maas + mesai_kazanci + ek_ucret, 2)
         rows += f"<tr><td><b>{isim}</b></td><td style='font-weight:bold; color:#6f42c1;'>{pin}</td><td>{sabit_maas:,.2f} TL</td><td>{saatlik_ucret:,.2f} TL</td><td>{toplam_mesai} Saat</td><td style='color:red;'>+{mesai_kazanci:,.2f} TL</td><td>{ek_ucret:,.2f} TL</td><td style='color:#28a745; font-weight:bold;'>{toplam_hakedis:,.2f} TL</td><td><form action='/ek-ucret' method='POST' style='margin:0;'><input type='hidden' name='p_id' value='{p_id}'><input type='number' name='miktar' style='width:65px; padding:4px;' placeholder='TL' required><input type='submit' value='Ekle' style='background:#28a745; color:#fff; border:none; padding:5px;'></form></td><td><a href='/p-sil/{p_id}' style='background:#dc3545; color:#fff; padding:4px 8px; border-radius:3px; text-decoration:none; font-size:12px;'>Sil</a></td></tr>"
     cursor.execute("SELECT k.tarih, p.isim, k.giris_saati, k.cikis_saati, k.fazla_mesai_saati FROM kayitlar k JOIN personeller p ON k.personel_id = p.id ORDER BY k.id DESC LIMIT 30")
     gecmis_raw = cursor.fetchall()
-    gecmis_rows = "".join([f"<tr><td>{g[0]}</td><td><b>{g[1]}</b></td><td style='color:green;'>{g[2]}</td><td>{g[3] if g[3] else 'İçeride'}</td><td>{g[4]} Saat</td></tr>" for g in gecmis_raw])
+    gecmis_rows = "".join([f"<tr><td>{g}</td><td><b>{g}</b></td><td style='color:green;'>{g}</td><td>{g if g else 'İçeride'}</td><td>{g} Saat</td></tr>" for g in gecmis_raw])
     conn.close()
+    
     html = f"""
     <html><head><meta charset='utf-8'><title>Yönetim Paneli</title>
-    <style>body{{font-family:sans-serif; background:#f4f6f9; padding:25px; color:#333;}} .container{{max-width:1300px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
+    <style>body{{font-family:sans-serif; background:#f4f6f9; padding:25px; color:#333;}} .container{{max-width:1350px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.08);}} table{{width:100%; border-collapse:collapse; margin-top:15px; font-size:14px;}} th,td{{padding:10px; border-bottom:1px solid #dee2e6; text-align:left;}} th{{background:#212529; color:#fff;}} .form-box{{background:#e9ecef; padding:15px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;}} input[type=text], input[type=number]{{padding:6px; margin-right:5px; border:1px solid #ddd; border-radius:4px;}}</style>
     </head><body><div class='container'>
         <h2>🛡️ Şirket Maaş, Prim ve Güvenli QR Kontrol Otomasyonu</h2>
         <div class='form-box'>
@@ -174,7 +176,7 @@ def ortak_giris():
     cursor.execute("SELECT id, isim FROM personeller ORDER BY isim ASC")
     personeller = cursor.fetchall()
     conn.close()
-    options = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in personeller])
+    options = "".join([f"<option value='{p}'>{p}</option>" for p in personeller])
     
     html = f"""
     <html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Giriş Paneli</title>
@@ -207,6 +209,7 @@ def ortak_giris():
     </div></body></html>
     """
     return render_template_string(html)
+
 @app.route("/konum-dogrula", methods=["POST"])
 def konum_dogrula():
     data = request.get_json()
@@ -218,7 +221,7 @@ def konum_dogrula():
     
     mesafe = mesafe_hesapla(SIRKET_ENLEM, SIRKET_BOYLAM, kul_enlem, kul_boylam)
     if mesafe > GECERLI_MESAFE_METRE:
-        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\n\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir.\n\n💡 İpucu: Telefonun konum ayarlarından 'Hassas/Tam Konum' özelliğini açıp dükkan içinde pencere kenarına geçerek tekrar dene."})
+        return jsonify({"durum": "hata", "mesaj": f"❌ İŞLEM ENGELLENDİ!\nDükkan sınırları dışındasınız.\\n\\nÖlçülen Uzaklık: {round(mesafe, 1)} metre.\\nSapma sınırı: {GECERLI_MESAFE_METRE} metredir."})
 
     conn = sqlite3.connect("takip.db")
     cursor = conn.cursor()
@@ -239,7 +242,7 @@ def konum_dogrula():
         if acik_kayit: mesaj = f"Zaten içeride çalışıyor görünüyorsunuz, {isim}!"
         else:
             cursor.execute("INSERT INTO kayitlar (personel_id, tarih, giris_saati) VALUES (?, ?, ?)", (p_id, bugun, saat_str))
-            mesaj = f"✓ BAŞARILI!\n{isim}, GİRİŞ kaydınız alındı. Mesafe Farkı: {round(mesafe, 1)} Metre."
+            mesaj = f"✓ BAŞARILI!\\n{isim}, GİRİŞ kaydınız alındı.\\nMesafe Farkı: {round(mesafe, 1)} Metre."
     else:
         if not acik_kayit: mesaj = f"Aktif giriş kaydınız bulunamadı, {isim}!"
         else:
@@ -248,7 +251,7 @@ def konum_dogrula():
             calisilan_saat = round((simdi - g_zamani).total_seconds() / 3600, 2)
             fazla_mesai = round(calisilan_saat - 8.0, 2) if calisilan_saat > 8.0 else 0.0
             cursor.execute("UPDATE kayitlar SET cikis_saati = ?, fazla_mesai_saati = ? WHERE id = ?", (saat_str, fazla_mesai, k_id))
-            mesaj = f"✓ BAŞARILI!\nGüle güle {isim}, ÇIKIŞ kaydınız alındı. Fark: {round(mesafe, 1)} Metre."
+            mesaj = f"✓ BAŞARILI!\\nGüle güle {isim}, ÇIKIŞ kaydınız alındı.\\nMesafe Farkı: {round(mesafe, 1)} Metre."
     conn.commit()
     conn.close()
     return jsonify({"durum": "ok", "mesaj": mesaj})
@@ -340,7 +343,8 @@ def excel_rapor():
     df = pd.read_sql_query(query, conn)
     conn.close()
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Mesai_Raporu')
     output.seek(0)
     return send_file(output, download_name=f"Mesai_Raporu_{datetime.now().strftime('%Y%m%d')}.xlsx", as_attachment=True)
 
